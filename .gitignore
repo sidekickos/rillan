@@ -1,0 +1,9 @@
+.idea/
+.sisyphus/
+.DS_Store
+rillan
+coverage.out
+*.cover
+testdata/tmp/
+*.local.yaml
+*.log
