@@ -1,0 +1,203 @@
+package config
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strconv"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+type ValidationMode string
+
+const (
+	ValidationModeServe  ValidationMode = "serve"
+	ValidationModeIndex  ValidationMode = "index"
+	ValidationModeStatus ValidationMode = "status"
+)
+
+func Load(path string) (Config, error) {
+	return LoadWithMode(path, ValidationModeServe)
+}
+
+func LoadWithMode(path string, mode ValidationMode) (Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Config{}, fmt.Errorf("config file not found at %s; run `rillan init --output %s` first", path, path)
+		}
+		return Config{}, fmt.Errorf("read config: %w", err)
+	}
+
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return Config{}, fmt.Errorf("parse config: %w", err)
+	}
+
+	applyEnvOverrides(&cfg)
+	applyDerivedDefaults(&cfg)
+
+	if err := ValidateForMode(cfg, mode); err != nil {
+		return Config{}, err
+	}
+
+	return cfg, nil
+}
+
+func applyDerivedDefaults(cfg *Config) {
+	if cfg.Provider.Type == "" {
+		cfg.Provider.Type = ProviderOpenAI
+	}
+	if cfg.Provider.OpenAI.BaseURL == "" {
+		cfg.Provider.OpenAI.BaseURL = "https://api.openai.com/v1"
+	}
+	if cfg.Provider.Anthropic.BaseURL == "" {
+		cfg.Provider.Anthropic.BaseURL = "https://api.anthropic.com"
+	}
+	if cfg.Provider.Local.BaseURL == "" {
+		cfg.Provider.Local.BaseURL = "http://127.0.0.1:11434"
+	}
+	if cfg.Runtime.LocalModelBaseURL == "" {
+		cfg.Runtime.LocalModelBaseURL = cfg.Provider.Local.BaseURL
+	}
+	if cfg.Runtime.VectorStoreMode == "" {
+		cfg.Runtime.VectorStoreMode = "embedded"
+	}
+	if len(cfg.Index.Excludes) == 0 {
+		cfg.Index.Excludes = slices.Clone(DefaultConfig().Index.Excludes)
+	}
+	if cfg.Index.ChunkSizeLines == 0 {
+		cfg.Index.ChunkSizeLines = DefaultConfig().Index.ChunkSizeLines
+	}
+	if cfg.Server.Host == "" {
+		cfg.Server.Host = "127.0.0.1"
+	}
+	if cfg.Server.Port == 0 {
+		cfg.Server.Port = 8420
+	}
+	if cfg.Server.LogLevel == "" {
+		cfg.Server.LogLevel = "info"
+	}
+}
+
+func applyEnvOverrides(cfg *Config) {
+	applyStringEnv(&cfg.Server.Host, "RILLAN_SERVER_HOST")
+	applyIntEnv(&cfg.Server.Port, "RILLAN_SERVER_PORT")
+	applyStringEnv(&cfg.Server.LogLevel, "RILLAN_SERVER_LOG_LEVEL")
+
+	applyStringEnv(&cfg.Provider.Type, "RILLAN_PROVIDER_TYPE")
+	applyStringEnv(&cfg.Provider.OpenAI.BaseURL, "RILLAN_OPENAI_BASE_URL")
+	applyStringEnv(&cfg.Provider.OpenAI.APIKey, "RILLAN_OPENAI_API_KEY", "OPENAI_API_KEY")
+	applyBoolEnv(&cfg.Provider.Anthropic.Enabled, "RILLAN_ANTHROPIC_ENABLED")
+	applyStringEnv(&cfg.Provider.Anthropic.BaseURL, "RILLAN_ANTHROPIC_BASE_URL")
+	applyStringEnv(&cfg.Provider.Anthropic.APIKey, "RILLAN_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY")
+	applyStringEnv(&cfg.Provider.Local.BaseURL, "RILLAN_LOCAL_MODEL_BASE_URL")
+	applyStringEnv(&cfg.Index.Root, "RILLAN_INDEX_ROOT")
+	applyCSVEnv(&cfg.Index.Includes, "RILLAN_INDEX_INCLUDES")
+	applyCSVEnv(&cfg.Index.Excludes, "RILLAN_INDEX_EXCLUDES")
+	applyIntEnv(&cfg.Index.ChunkSizeLines, "RILLAN_INDEX_CHUNK_SIZE_LINES")
+
+	applyStringEnv(&cfg.Runtime.VectorStoreMode, "RILLAN_VECTOR_STORE_MODE")
+	applyStringEnv(&cfg.Runtime.LocalModelBaseURL, "RILLAN_LOCAL_MODEL_BASE_URL")
+}
+
+func applyStringEnv(target *string, keys ...string) {
+	for _, key := range keys {
+		if value, ok := os.LookupEnv(key); ok {
+			*target = value
+			return
+		}
+	}
+}
+
+func applyIntEnv(target *int, key string) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err == nil {
+		*target = parsed
+	}
+}
+
+func applyBoolEnv(target *bool, key string) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return
+	}
+
+	parsed, err := strconv.ParseBool(value)
+	if err == nil {
+		*target = parsed
+	}
+}
+
+func applyCSVEnv(target *[]string, key string) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return
+	}
+
+	parts := strings.Split(value, ",")
+	items := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			items = append(items, trimmed)
+		}
+	}
+	*target = items
+}
+
+func DefaultConfigPath() string {
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return "rillan.yaml"
+	}
+	return filepath.Join(base, "rillan", "config.yaml")
+}
+
+func DefaultDataDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".", ".rillan")
+	}
+
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(home, "Library", "Application Support", "rillan", "data")
+	}
+
+	if base, ok := os.LookupEnv("XDG_DATA_HOME"); ok && base != "" {
+		return filepath.Join(base, "rillan")
+	}
+
+	return filepath.Join(home, ".local", "share", "rillan")
+}
+
+func DefaultLogDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".", ".rillan", "logs")
+	}
+
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(home, "Library", "Logs", "rillan")
+	}
+
+	if base, ok := os.LookupEnv("XDG_STATE_HOME"); ok && base != "" {
+		return filepath.Join(base, "rillan", "logs")
+	}
+
+	return filepath.Join(home, ".local", "state", "rillan", "logs")
+}
+
+func normalizeString(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
