@@ -20,8 +20,8 @@ func ValidateChatCompletionRequest(req ChatCompletionRequest) error {
 			return fmt.Errorf("messages[%d].role must be one of system, developer, user, assistant, or tool", idx)
 		}
 
-		var content string
-		if err := json.Unmarshal(message.Content, &content); err != nil {
+		content, err := MessageText(message)
+		if err != nil {
 			return fmt.Errorf("messages[%d].content must be a string in milestone one", idx)
 		}
 		if strings.TrimSpace(content) == "" {
@@ -29,7 +29,24 @@ func ValidateChatCompletionRequest(req ChatCompletionRequest) error {
 		}
 	}
 
+	if req.Retrieval != nil {
+		if req.Retrieval.TopK != nil && *req.Retrieval.TopK < 1 {
+			return fmt.Errorf("retrieval.top_k must be greater than zero")
+		}
+		if req.Retrieval.MaxContextChars != nil && *req.Retrieval.MaxContextChars < 1 {
+			return fmt.Errorf("retrieval.max_context_chars must be greater than zero")
+		}
+	}
+
 	return nil
+}
+
+func MessageText(message Message) (string, error) {
+	var content string
+	if err := json.Unmarshal(message.Content, &content); err != nil {
+		return "", err
+	}
+	return content, nil
 }
 
 func WriteError(w http.ResponseWriter, status int, messageType, message string) {

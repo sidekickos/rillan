@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -231,6 +233,67 @@ func (s *Store) ReadStatus(ctx context.Context) (Status, error) {
 	return status, nil
 }
 
+func (s *Store) SearchChunks(ctx context.Context, query string, limit int) ([]SearchResult, error) {
+	if limit < 1 {
+		return nil, fmt.Errorf("search limit must be greater than zero")
+	}
+
+	queryEmbedding := PlaceholderEmbedding(query)
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT c.id, c.document_path, c.ordinal, c.start_line, c.end_line, c.content, v.embedding
+		FROM chunks c
+		JOIN vectors v ON v.chunk_id = c.id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query chunk search rows: %w", err)
+	}
+	defer rows.Close()
+
+	results := make([]SearchResult, 0, limit)
+	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		var (
+			result        SearchResult
+			embeddingBlob []byte
+		)
+		if err := rows.Scan(&result.ChunkID, &result.DocumentPath, &result.Ordinal, &result.StartLine, &result.EndLine, &result.Content, &embeddingBlob); err != nil {
+			return nil, fmt.Errorf("scan chunk search row: %w", err)
+		}
+
+		embedding, err := DecodeEmbedding(embeddingBlob)
+		if err != nil {
+			return nil, fmt.Errorf("decode embedding for %s: %w", result.ChunkID, err)
+		}
+		result.Score = cosineSimilarity(queryEmbedding, embedding)
+		results = append(results, result)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate chunk search rows: %w", err)
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Score != results[j].Score {
+			return results[i].Score > results[j].Score
+		}
+		if results[i].DocumentPath != results[j].DocumentPath {
+			return results[i].DocumentPath < results[j].DocumentPath
+		}
+		if results[i].Ordinal != results[j].Ordinal {
+			return results[i].Ordinal < results[j].Ordinal
+		}
+		return results[i].ChunkID < results[j].ChunkID
+	})
+
+	if len(results) > limit {
+		results = results[:limit]
+	}
+
+	return results, nil
+}
+
 func nullableString(value string) any {
 	if value == "" {
 		return nil
@@ -252,4 +315,25 @@ func parseSQLiteTimestamp(value string) time.Time {
 		return time.Time{}
 	}
 	return parsed.UTC()
+}
+
+func cosineSimilarity(left, right []float32) float64 {
+	if len(left) == 0 || len(right) == 0 || len(left) != len(right) {
+		return 0
+	}
+
+	var dot float64
+	var leftNorm float64
+	var rightNorm float64
+	for i := range left {
+		l := float64(left[i])
+		r := float64(right[i])
+		dot += l * r
+		leftNorm += l * l
+		rightNorm += r * r
+	}
+	if leftNorm == 0 || rightNorm == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(leftNorm) * math.Sqrt(rightNorm))
 }

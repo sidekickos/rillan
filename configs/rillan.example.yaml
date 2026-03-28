@@ -25,6 +25,11 @@ index:
     - ".idea"
   chunk_size_lines: 120
 
+retrieval:
+  enabled: false
+  top_k: 4
+  max_context_chars: 6000
+
 runtime:
   vector_store_mode: "embedded"
   local_model_base_url: "http://127.0.0.1:11434"

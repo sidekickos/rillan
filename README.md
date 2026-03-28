@@ -17,7 +17,7 @@ Rillan is a local OpenAI-compatible proxy daemon written in Go. Milestone one de
 - `rillan status` for local corpus state
 - embedded SQLite metadata, chunk, and vector storage
 
-Still out of scope: retrieval-time context injection, MCP, background file watching, local model orchestration, provider failover, and audit ledger work.
+Still out of scope: MCP, background file watching, local model orchestration, provider failover, and audit ledger work.
 
 ## Provider Policy
 
@@ -61,6 +61,9 @@ Environment overrides:
 - `RILLAN_INDEX_INCLUDES`
 - `RILLAN_INDEX_EXCLUDES`
 - `RILLAN_INDEX_CHUNK_SIZE_LINES`
+- `RILLAN_RETRIEVAL_ENABLED`
+- `RILLAN_RETRIEVAL_TOP_K`
+- `RILLAN_RETRIEVAL_MAX_CONTEXT_CHARS`
 - `RILLAN_VECTOR_STORE_MODE`
 
 Use `configs/rillan.example.yaml` as the checked-in reference config.
@@ -107,6 +110,11 @@ Send a chat completion request:
 curl -X POST http://127.0.0.1:8420/v1/chat/completions \
   -H 'content-type: application/json' \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}'
+
+# Optional per-request local retrieval override:
+curl -X POST http://127.0.0.1:8420/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"summarize this repo"}],"retrieval":{"enabled":true,"top_k":4}}'
 ```
 
 ## Development

@@ -8,10 +8,11 @@ const (
 )
 
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Provider ProviderConfig `yaml:"provider"`
-	Index    IndexConfig    `yaml:"index"`
-	Runtime  RuntimeConfig  `yaml:"runtime"`
+	Server    ServerConfig    `yaml:"server"`
+	Provider  ProviderConfig  `yaml:"provider"`
+	Index     IndexConfig     `yaml:"index"`
+	Retrieval RetrievalConfig `yaml:"retrieval"`
+	Runtime   RuntimeConfig   `yaml:"runtime"`
 }
 
 type ServerConfig struct {
@@ -54,6 +55,12 @@ type RuntimeConfig struct {
 	LocalModelBaseURL string `yaml:"local_model_base_url"`
 }
 
+type RetrievalConfig struct {
+	Enabled         bool `yaml:"enabled"`
+	TopK            int  `yaml:"top_k"`
+	MaxContextChars int  `yaml:"max_context_chars"`
+}
+
 func DefaultConfig() Config {
 	return Config{
 		Server: ServerConfig{
@@ -77,6 +84,11 @@ func DefaultConfig() Config {
 		Index: IndexConfig{
 			Excludes:       []string{".git", "node_modules", ".direnv", ".idea"},
 			ChunkSizeLines: 120,
+		},
+		Retrieval: RetrievalConfig{
+			Enabled:         false,
+			TopK:            4,
+			MaxContextChars: 6000,
 		},
 		Runtime: RuntimeConfig{
 			VectorStoreMode:   "embedded",

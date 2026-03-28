@@ -3,10 +3,17 @@ package openai
 import "encoding/json"
 
 type ChatCompletionRequest struct {
-	Model    string        `json:"model"`
-	Messages []Message     `json:"messages"`
-	Stream   bool          `json:"stream,omitempty"`
-	Metadata []interface{} `json:"-"`
+	Model     string            `json:"model"`
+	Messages  []Message         `json:"messages"`
+	Stream    bool              `json:"stream,omitempty"`
+	Retrieval *RetrievalOptions `json:"retrieval,omitempty"`
+	Metadata  []interface{}     `json:"-"`
+}
+
+type RetrievalOptions struct {
+	Enabled         *bool `json:"enabled,omitempty"`
+	TopK            *int  `json:"top_k,omitempty"`
+	MaxContextChars *int  `json:"max_context_chars,omitempty"`
 }
 
 type Message struct {

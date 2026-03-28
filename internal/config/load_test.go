@@ -74,6 +74,38 @@ func TestLoadAppliesIndexDefaults(t *testing.T) {
 	if len(cfg.Index.Excludes) == 0 {
 		t.Fatal("expected default excludes to be populated")
 	}
+	if got, want := cfg.Retrieval.TopK, 4; got != want {
+		t.Fatalf("retrieval.top_k = %d, want %d", got, want)
+	}
+	if got, want := cfg.Retrieval.MaxContextChars, 6000; got != want {
+		t.Fatalf("retrieval.max_context_chars = %d, want %d", got, want)
+	}
+}
+
+func TestLoadAppliesRetrievalEnvOverrides(t *testing.T) {
+	t.Setenv("RILLAN_OPENAI_API_KEY", "test-key")
+	t.Setenv("RILLAN_RETRIEVAL_ENABLED", "true")
+	t.Setenv("RILLAN_RETRIEVAL_TOP_K", "7")
+	t.Setenv("RILLAN_RETRIEVAL_MAX_CONTEXT_CHARS", "321")
+
+	path := writeTempConfig(t, `runtime:
+  vector_store_mode: "embedded"
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if !cfg.Retrieval.Enabled {
+		t.Fatal("expected retrieval.enabled override to be applied")
+	}
+	if got, want := cfg.Retrieval.TopK, 7; got != want {
+		t.Fatalf("retrieval.top_k = %d, want %d", got, want)
+	}
+	if got, want := cfg.Retrieval.MaxContextChars, 321; got != want {
+		t.Fatalf("retrieval.max_context_chars = %d, want %d", got, want)
+	}
 }
 
 func TestLoadResolvesRelativeIndexRootFromConfigDirectory(t *testing.T) {

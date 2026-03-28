@@ -40,6 +40,21 @@ func TestValidateChatCompletionRequestRejectsNonStringContent(t *testing.T) {
 	}
 }
 
+func TestValidateChatCompletionRequestRejectsInvalidRetrievalOverride(t *testing.T) {
+	zero := 0
+	req := ChatCompletionRequest{
+		Model:    "gpt-4o-mini",
+		Messages: []Message{{Role: "user", Content: mustMarshalString(t, "hello")}},
+		Retrieval: &RetrievalOptions{
+			TopK: &zero,
+		},
+	}
+
+	if err := ValidateChatCompletionRequest(req); err == nil {
+		t.Fatal("expected error for invalid retrieval override")
+	}
+}
+
 func mustMarshalString(t *testing.T, value string) json.RawMessage {
 	t.Helper()
 	data, err := json.Marshal(value)

@@ -33,7 +33,7 @@ func New(cfg config.Config, configPath string, logger *slog.Logger) (*App, error
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	server := &http.Server{
 		Addr:    addr,
-		Handler: httpapi.NewRouter(logger, provider),
+		Handler: httpapi.NewRouter(logger, provider, cfg),
 	}
 
 	return &App{

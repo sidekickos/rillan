@@ -30,6 +30,12 @@ func ValidateForMode(cfg Config, mode ValidationMode) error {
 	if cfg.Index.ChunkSizeLines < 1 {
 		return fmt.Errorf("index.chunk_size_lines must be greater than zero")
 	}
+	if cfg.Retrieval.TopK < 1 {
+		return fmt.Errorf("retrieval.top_k must be greater than zero")
+	}
+	if cfg.Retrieval.MaxContextChars < 1 {
+		return fmt.Errorf("retrieval.max_context_chars must be greater than zero")
+	}
 	for _, pattern := range cfg.Index.Includes {
 		if strings.TrimSpace(pattern) == "" {
 			return fmt.Errorf("index.includes must not contain empty patterns")

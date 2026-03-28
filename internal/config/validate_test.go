@@ -60,3 +60,21 @@ func TestValidateForStatusDoesNotRequireRoot(t *testing.T) {
 		t.Fatalf("ValidateForMode returned error: %v", err)
 	}
 }
+
+func TestValidateRejectsInvalidRetrievalBounds(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Provider.OpenAI.APIKey = "test-key"
+	cfg.Retrieval.TopK = 0
+
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected invalid retrieval.top_k to fail validation")
+	}
+
+	cfg = DefaultConfig()
+	cfg.Provider.OpenAI.APIKey = "test-key"
+	cfg.Retrieval.MaxContextChars = 0
+
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected invalid retrieval.max_context_chars to fail validation")
+	}
+}

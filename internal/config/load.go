@@ -74,6 +74,12 @@ func applyDerivedDefaults(cfg *Config, configPath string) {
 	if cfg.Index.ChunkSizeLines == 0 {
 		cfg.Index.ChunkSizeLines = DefaultConfig().Index.ChunkSizeLines
 	}
+	if cfg.Retrieval.TopK == 0 {
+		cfg.Retrieval.TopK = DefaultConfig().Retrieval.TopK
+	}
+	if cfg.Retrieval.MaxContextChars == 0 {
+		cfg.Retrieval.MaxContextChars = DefaultConfig().Retrieval.MaxContextChars
+	}
 	if cfg.Server.Host == "" {
 		cfg.Server.Host = "127.0.0.1"
 	}
@@ -104,6 +110,9 @@ func applyEnvOverrides(cfg *Config) {
 	applyCSVEnv(&cfg.Index.Includes, "RILLAN_INDEX_INCLUDES")
 	applyCSVEnv(&cfg.Index.Excludes, "RILLAN_INDEX_EXCLUDES")
 	applyIntEnv(&cfg.Index.ChunkSizeLines, "RILLAN_INDEX_CHUNK_SIZE_LINES")
+	applyBoolEnv(&cfg.Retrieval.Enabled, "RILLAN_RETRIEVAL_ENABLED")
+	applyIntEnv(&cfg.Retrieval.TopK, "RILLAN_RETRIEVAL_TOP_K")
+	applyIntEnv(&cfg.Retrieval.MaxContextChars, "RILLAN_RETRIEVAL_MAX_CONTEXT_CHARS")
 
 	applyStringEnv(&cfg.Runtime.VectorStoreMode, "RILLAN_VECTOR_STORE_MODE")
 	applyStringEnv(&cfg.Runtime.LocalModelBaseURL, "RILLAN_LOCAL_MODEL_BASE_URL")

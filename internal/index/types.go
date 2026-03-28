@@ -37,6 +37,16 @@ type VectorRecord struct {
 	Embedding  []byte
 }
 
+type SearchResult struct {
+	ChunkID      string
+	DocumentPath string
+	Ordinal      int
+	StartLine    int
+	EndLine      int
+	Content      string
+	Score        float64
+}
+
 type Status struct {
 	ConfiguredRootPath  string
 	LastAttemptState    string
