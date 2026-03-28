@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/sidekickos/rillan/internal/config"
 	"github.com/sidekickos/rillan/internal/index"
+	"github.com/sidekickos/rillan/internal/ollama"
 	"github.com/spf13/cobra"
 )
 
@@ -20,7 +23,20 @@ func newIndexCommand() *cobra.Command {
 				return err
 			}
 
-			status, err := index.Rebuild(cmd.Context(), cfg, newLogger(cfg.Server.LogLevel))
+			logger := newLogger(cfg.Server.LogLevel)
+			var opts []index.RebuildOption
+
+			if cfg.LocalModel.Enabled {
+				client := ollama.New(cfg.LocalModel.BaseURL, &http.Client{})
+				reachable := client.Ping(cmd.Context()) == nil
+				if !reachable {
+					logger.Warn("ollama unavailable, falling back to placeholder embeddings",
+						"base_url", cfg.LocalModel.BaseURL)
+				}
+				opts = append(opts, index.WithEmbedder(&ollamaEmbedderAdapter{client: client}, reachable))
+			}
+
+			status, err := index.Rebuild(cmd.Context(), cfg, logger, opts...)
 			if err != nil {
 				return err
 			}
@@ -33,4 +49,13 @@ func newIndexCommand() *cobra.Command {
 	cmd.Flags().StringVar(&configPath, "config", config.DefaultConfigPath(), "Path to the runtime config file")
 
 	return cmd
+}
+
+// ollamaEmbedderAdapter adapts ollama.Client to the index.Embedder interface.
+type ollamaEmbedderAdapter struct {
+	client *ollama.Client
+}
+
+func (a *ollamaEmbedderAdapter) Embed(ctx context.Context, model string, text string) ([]float32, error) {
+	return a.client.Embed(ctx, model, text)
 }

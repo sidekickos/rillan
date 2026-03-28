@@ -30,6 +30,14 @@ retrieval:
   top_k: 4
   max_context_chars: 6000
 
+local_model:
+  enabled: false
+  base_url: "http://127.0.0.1:11434"
+  embed_model: "nomic-embed-text"
+  query_rewrite:
+    enabled: false
+    model: "qwen3:0.6b"
+
 runtime:
   vector_store_mode: "embedded"
   local_model_base_url: "http://127.0.0.1:11434"

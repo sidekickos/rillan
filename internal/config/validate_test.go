@@ -61,6 +61,61 @@ func TestValidateForStatusDoesNotRequireRoot(t *testing.T) {
 	}
 }
 
+func TestValidateLocalModelRequiresBaseURLWhenEnabled(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Provider.OpenAI.APIKey = "test-key"
+	cfg.LocalModel.Enabled = true
+	cfg.LocalModel.BaseURL = ""
+
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected validation error for empty base_url when local_model enabled")
+	}
+}
+
+func TestValidateLocalModelRequiresEmbedModelWhenEnabled(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Provider.OpenAI.APIKey = "test-key"
+	cfg.LocalModel.Enabled = true
+	cfg.LocalModel.EmbedModel = ""
+
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected validation error for empty embed_model when local_model enabled")
+	}
+}
+
+func TestValidateQueryRewriteRequiresLocalModelEnabled(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Provider.OpenAI.APIKey = "test-key"
+	cfg.LocalModel.Enabled = false
+	cfg.LocalModel.QueryRewrite.Enabled = true
+
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected validation error for query_rewrite.enabled without local_model.enabled")
+	}
+}
+
+func TestValidateQueryRewriteRequiresModel(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Provider.OpenAI.APIKey = "test-key"
+	cfg.LocalModel.Enabled = true
+	cfg.LocalModel.QueryRewrite.Enabled = true
+	cfg.LocalModel.QueryRewrite.Model = ""
+
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected validation error for empty query_rewrite.model")
+	}
+}
+
+func TestValidateAcceptsEnabledLocalModel(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Provider.OpenAI.APIKey = "test-key"
+	cfg.LocalModel.Enabled = true
+
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+}
+
 func TestValidateRejectsInvalidRetrievalBounds(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Provider.OpenAI.APIKey = "test-key"

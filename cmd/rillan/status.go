@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/sidekickos/rillan/internal/config"
 	"github.com/sidekickos/rillan/internal/index"
+	"github.com/sidekickos/rillan/internal/ollama"
 	"github.com/spf13/cobra"
 )
 
@@ -39,6 +41,23 @@ func newStatusCommand() *cobra.Command {
 				status.Vectors,
 				status.DBPath,
 			)
+			if err != nil {
+				return err
+			}
+
+			// Local model status
+			if cfg.LocalModel.Enabled {
+				client := ollama.New(cfg.LocalModel.BaseURL, &http.Client{})
+				reachable := client.Ping(cmd.Context()) == nil
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "local_model_enabled: true\nlocal_model_url: %s\nlocal_model_reachable: %t\nlocal_model_embed_model: %s\nlocal_model_query_rewrite: %t\n",
+					cfg.LocalModel.BaseURL,
+					reachable,
+					cfg.LocalModel.EmbedModel,
+					cfg.LocalModel.QueryRewrite.Enabled,
+				)
+			} else {
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "local_model_enabled: false\n")
+			}
 			return err
 		},
 	}

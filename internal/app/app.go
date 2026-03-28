@@ -9,7 +9,9 @@ import (
 
 	"github.com/sidekickos/rillan/internal/config"
 	"github.com/sidekickos/rillan/internal/httpapi"
+	"github.com/sidekickos/rillan/internal/ollama"
 	"github.com/sidekickos/rillan/internal/providers"
+	"github.com/sidekickos/rillan/internal/retrieval"
 )
 
 type App struct {
@@ -30,10 +32,32 @@ func New(cfg config.Config, configPath string, logger *slog.Logger) (*App, error
 		return nil, err
 	}
 
+	var routerOpts httpapi.RouterOptions
+
+	if cfg.LocalModel.Enabled {
+		ollamaClient := ollama.New(cfg.LocalModel.BaseURL, &http.Client{})
+		routerOpts.OllamaChecker = ollamaClient.Ping
+
+		routerOpts.PipelineOpts = append(routerOpts.PipelineOpts,
+			retrieval.WithQueryEmbedder(
+				retrieval.NewFallbackEmbedder(
+					retrieval.NewOllamaEmbedder(ollamaClient, cfg.LocalModel.EmbedModel),
+					retrieval.PlaceholderEmbedder{},
+				),
+			),
+		)
+
+		if cfg.LocalModel.QueryRewrite.Enabled {
+			routerOpts.PipelineOpts = append(routerOpts.PipelineOpts,
+				retrieval.WithQueryRewriter(retrieval.NewOllamaQueryRewriter(ollamaClient, cfg.LocalModel.QueryRewrite.Model)),
+			)
+		}
+	}
+
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	server := &http.Server{
 		Addr:    addr,
-		Handler: httpapi.NewRouter(logger, provider, cfg),
+		Handler: httpapi.NewRouter(logger, provider, cfg, routerOpts),
 	}
 
 	return &App{

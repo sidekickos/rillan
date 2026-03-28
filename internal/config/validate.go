@@ -47,6 +47,23 @@ func ValidateForMode(cfg Config, mode ValidationMode) error {
 		}
 	}
 
+	if cfg.LocalModel.Enabled {
+		if strings.TrimSpace(cfg.LocalModel.BaseURL) == "" {
+			return fmt.Errorf("local_model.base_url must not be empty when local_model is enabled")
+		}
+		if strings.TrimSpace(cfg.LocalModel.EmbedModel) == "" {
+			return fmt.Errorf("local_model.embed_model must not be empty when local_model is enabled")
+		}
+	}
+	if cfg.LocalModel.QueryRewrite.Enabled {
+		if !cfg.LocalModel.Enabled {
+			return fmt.Errorf("local_model.enabled must be true when query_rewrite is enabled")
+		}
+		if strings.TrimSpace(cfg.LocalModel.QueryRewrite.Model) == "" {
+			return fmt.Errorf("local_model.query_rewrite.model must not be empty when query_rewrite is enabled")
+		}
+	}
+
 	switch mode {
 	case ValidationModeServe:
 		switch normalizeString(cfg.Provider.Type) {

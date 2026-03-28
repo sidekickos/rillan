@@ -89,6 +89,15 @@ func applyDerivedDefaults(cfg *Config, configPath string) {
 	if cfg.Server.LogLevel == "" {
 		cfg.Server.LogLevel = "info"
 	}
+	if cfg.LocalModel.BaseURL == "" {
+		cfg.LocalModel.BaseURL = "http://127.0.0.1:11434"
+	}
+	if cfg.LocalModel.EmbedModel == "" {
+		cfg.LocalModel.EmbedModel = "nomic-embed-text"
+	}
+	if cfg.LocalModel.QueryRewrite.Model == "" {
+		cfg.LocalModel.QueryRewrite.Model = "qwen3:0.6b"
+	}
 	if cfg.Index.Root != "" {
 		cfg.Index.Root = resolveIndexRoot(configPath, cfg.Index.Root)
 	}
@@ -116,6 +125,12 @@ func applyEnvOverrides(cfg *Config) {
 
 	applyStringEnv(&cfg.Runtime.VectorStoreMode, "RILLAN_VECTOR_STORE_MODE")
 	applyStringEnv(&cfg.Runtime.LocalModelBaseURL, "RILLAN_LOCAL_MODEL_BASE_URL")
+
+	applyBoolEnv(&cfg.LocalModel.Enabled, "RILLAN_LOCAL_MODEL_ENABLED")
+	applyStringEnv(&cfg.LocalModel.BaseURL, "RILLAN_LOCAL_MODEL_BASE_URL")
+	applyStringEnv(&cfg.LocalModel.EmbedModel, "RILLAN_LOCAL_MODEL_EMBED_MODEL")
+	applyBoolEnv(&cfg.LocalModel.QueryRewrite.Enabled, "RILLAN_LOCAL_MODEL_QUERY_REWRITE_ENABLED")
+	applyStringEnv(&cfg.LocalModel.QueryRewrite.Model, "RILLAN_LOCAL_MODEL_QUERY_REWRITE_MODEL")
 }
 
 func applyStringEnv(target *string, keys ...string) {

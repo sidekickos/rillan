@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -10,11 +11,17 @@ import (
 	"github.com/sidekickos/rillan/internal/retrieval"
 )
 
-func NewRouter(logger *slog.Logger, provider providers.Provider, cfg config.Config) http.Handler {
+// RouterOptions configures the HTTP router.
+type RouterOptions struct {
+	OllamaChecker  func(context.Context) error
+	PipelineOpts   []retrieval.PipelineOption
+}
+
+func NewRouter(logger *slog.Logger, provider providers.Provider, cfg config.Config, opts RouterOptions) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", HealthHandler)
-	mux.HandleFunc("GET /readyz", ReadyHandler(provider))
-	mux.Handle("/v1/chat/completions", NewChatCompletionsHandler(logger, provider, retrieval.NewPipeline(cfg.Retrieval, index.DefaultDBPath())))
+	mux.HandleFunc("GET /readyz", ReadyHandler(provider, opts.OllamaChecker))
+	mux.Handle("/v1/chat/completions", NewChatCompletionsHandler(logger, provider, retrieval.NewPipeline(cfg.Retrieval, index.DefaultDBPath(), opts.PipelineOpts...)))
 
 	return WrapWithMiddleware(logger, mux)
 }

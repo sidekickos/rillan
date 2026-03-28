@@ -108,6 +108,66 @@ func TestLoadAppliesRetrievalEnvOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadAppliesLocalModelEnvOverrides(t *testing.T) {
+	t.Setenv("RILLAN_OPENAI_API_KEY", "test-key")
+	t.Setenv("RILLAN_LOCAL_MODEL_ENABLED", "true")
+	t.Setenv("RILLAN_LOCAL_MODEL_BASE_URL", "http://localhost:9999")
+	t.Setenv("RILLAN_LOCAL_MODEL_EMBED_MODEL", "custom-embed")
+	t.Setenv("RILLAN_LOCAL_MODEL_QUERY_REWRITE_ENABLED", "true")
+	t.Setenv("RILLAN_LOCAL_MODEL_QUERY_REWRITE_MODEL", "custom-rewrite")
+
+	path := writeTempConfig(t, `runtime:
+  vector_store_mode: "embedded"
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if !cfg.LocalModel.Enabled {
+		t.Fatal("expected local_model.enabled to be true")
+	}
+	if got, want := cfg.LocalModel.BaseURL, "http://localhost:9999"; got != want {
+		t.Fatalf("local_model.base_url = %q, want %q", got, want)
+	}
+	if got, want := cfg.LocalModel.EmbedModel, "custom-embed"; got != want {
+		t.Fatalf("local_model.embed_model = %q, want %q", got, want)
+	}
+	if !cfg.LocalModel.QueryRewrite.Enabled {
+		t.Fatal("expected query_rewrite.enabled to be true")
+	}
+	if got, want := cfg.LocalModel.QueryRewrite.Model, "custom-rewrite"; got != want {
+		t.Fatalf("query_rewrite.model = %q, want %q", got, want)
+	}
+}
+
+func TestLoadAppliesLocalModelDefaults(t *testing.T) {
+	t.Setenv("RILLAN_OPENAI_API_KEY", "test-key")
+
+	path := writeTempConfig(t, `runtime:
+  vector_store_mode: "embedded"
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if cfg.LocalModel.Enabled {
+		t.Fatal("expected local_model.enabled to default to false")
+	}
+	if got, want := cfg.LocalModel.BaseURL, "http://127.0.0.1:11434"; got != want {
+		t.Fatalf("local_model.base_url = %q, want %q", got, want)
+	}
+	if got, want := cfg.LocalModel.EmbedModel, "nomic-embed-text"; got != want {
+		t.Fatalf("local_model.embed_model = %q, want %q", got, want)
+	}
+	if got, want := cfg.LocalModel.QueryRewrite.Model, "qwen3:0.6b"; got != want {
+		t.Fatalf("query_rewrite.model = %q, want %q", got, want)
+	}
+}
+
 func TestLoadResolvesRelativeIndexRootFromConfigDirectory(t *testing.T) {
 	t.Setenv("RILLAN_OPENAI_API_KEY", "test-key")
 

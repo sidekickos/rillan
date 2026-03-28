@@ -233,12 +233,11 @@ func (s *Store) ReadStatus(ctx context.Context) (Status, error) {
 	return status, nil
 }
 
-func (s *Store) SearchChunks(ctx context.Context, query string, limit int) ([]SearchResult, error) {
+func (s *Store) SearchChunks(ctx context.Context, queryEmbedding []float32, limit int) ([]SearchResult, error) {
 	if limit < 1 {
 		return nil, fmt.Errorf("search limit must be greater than zero")
 	}
 
-	queryEmbedding := PlaceholderEmbedding(query)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT c.id, c.document_path, c.ordinal, c.start_line, c.end_line, c.content, v.embedding
 		FROM chunks c

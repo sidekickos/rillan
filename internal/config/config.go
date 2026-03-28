@@ -8,11 +8,24 @@ const (
 )
 
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
-	Provider  ProviderConfig  `yaml:"provider"`
-	Index     IndexConfig     `yaml:"index"`
-	Retrieval RetrievalConfig `yaml:"retrieval"`
-	Runtime   RuntimeConfig   `yaml:"runtime"`
+	Server     ServerConfig     `yaml:"server"`
+	Provider   ProviderConfig   `yaml:"provider"`
+	Index      IndexConfig      `yaml:"index"`
+	Retrieval  RetrievalConfig  `yaml:"retrieval"`
+	Runtime    RuntimeConfig    `yaml:"runtime"`
+	LocalModel LocalModelConfig `yaml:"local_model"`
+}
+
+type LocalModelConfig struct {
+	Enabled      bool               `yaml:"enabled"`
+	BaseURL      string             `yaml:"base_url"`
+	EmbedModel   string             `yaml:"embed_model"`
+	QueryRewrite QueryRewriteConfig `yaml:"query_rewrite"`
+}
+
+type QueryRewriteConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Model   string `yaml:"model"`
 }
 
 type ServerConfig struct {
@@ -93,6 +106,15 @@ func DefaultConfig() Config {
 		Runtime: RuntimeConfig{
 			VectorStoreMode:   "embedded",
 			LocalModelBaseURL: "http://127.0.0.1:11434",
+		},
+		LocalModel: LocalModelConfig{
+			Enabled:    false,
+			BaseURL:    "http://127.0.0.1:11434",
+			EmbedModel: "nomic-embed-text",
+			QueryRewrite: QueryRewriteConfig{
+				Enabled: false,
+				Model:   "qwen3:0.6b",
+			},
 		},
 	}
 }

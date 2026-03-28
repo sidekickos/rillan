@@ -34,7 +34,7 @@ func TestStoreSearchChunksReturnsDeterministicTopK(t *testing.T) {
 		t.Fatalf("ReplaceAll returned error: %v", err)
 	}
 
-	results, err := store.SearchChunks(context.Background(), "alpha retrieval focus", 2)
+	results, err := store.SearchChunks(context.Background(), PlaceholderEmbedding("alpha retrieval focus"), 2)
 	if err != nil {
 		t.Fatalf("SearchChunks returned error: %v", err)
 	}

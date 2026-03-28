@@ -17,7 +17,10 @@ Rillan is a local OpenAI-compatible proxy daemon written in Go. Milestone one de
 - `rillan status` for local corpus state
 - embedded SQLite metadata, chunk, and vector storage
 
-Still out of scope: MCP, background file watching, local model orchestration, provider failover, and audit ledger work.
+- optional local model helpers via Ollama for real embeddings and query rewriting
+- `rillan status` reports local model connectivity when configured
+
+Still out of scope: MCP, background file watching, provider failover, and audit ledger work.
 
 ## Provider Policy
 
@@ -64,6 +67,10 @@ Environment overrides:
 - `RILLAN_RETRIEVAL_ENABLED`
 - `RILLAN_RETRIEVAL_TOP_K`
 - `RILLAN_RETRIEVAL_MAX_CONTEXT_CHARS`
+- `RILLAN_LOCAL_MODEL_ENABLED`
+- `RILLAN_LOCAL_MODEL_EMBED_MODEL`
+- `RILLAN_LOCAL_MODEL_QUERY_REWRITE_ENABLED`
+- `RILLAN_LOCAL_MODEL_QUERY_REWRITE_MODEL`
 - `RILLAN_VECTOR_STORE_MODE`
 
 Use `configs/rillan.example.yaml` as the checked-in reference config.

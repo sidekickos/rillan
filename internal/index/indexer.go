@@ -7,9 +7,32 @@ import (
 	"github.com/sidekickos/rillan/internal/config"
 )
 
-func Rebuild(ctx context.Context, cfg config.Config, logger *slog.Logger) (Status, error) {
+// RebuildOption configures the Rebuild function.
+type RebuildOption func(*rebuildOptions)
+
+type rebuildOptions struct {
+	embedder Embedder
+}
+
+// WithEmbedder sets a real embedder for producing vectors during indexing.
+// When the embedder is reachable, OllamaVectorStore is used; otherwise
+// the function falls back to placeholder embeddings.
+func WithEmbedder(e Embedder, reachable bool) RebuildOption {
+	return func(o *rebuildOptions) {
+		if reachable {
+			o.embedder = e
+		}
+	}
+}
+
+func Rebuild(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...RebuildOption) (Status, error) {
 	if logger == nil {
 		logger = slog.Default()
+	}
+
+	var options rebuildOptions
+	for _, opt := range opts {
+		opt(&options)
 	}
 
 	store, err := OpenStore(DefaultDBPath())
@@ -18,9 +41,14 @@ func Rebuild(ctx context.Context, cfg config.Config, logger *slog.Logger) (Statu
 	}
 	defer store.Close()
 
-	vectorStore, err := NewVectorStore(cfg.Runtime.VectorStoreMode)
-	if err != nil {
-		return Status{}, err
+	var vectorStore VectorStore
+	if options.embedder != nil {
+		vectorStore = NewOllamaVectorStore(options.embedder, cfg.LocalModel.EmbedModel)
+	} else {
+		vectorStore, err = NewVectorStore(cfg.Runtime.VectorStoreMode)
+		if err != nil {
+			return Status{}, err
+		}
 	}
 
 	runID, err := store.RecordRunStart(ctx, cfg.Index.Root)
