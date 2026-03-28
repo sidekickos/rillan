@@ -1,6 +1,6 @@
 # Rillan Repository ADRs
 
-These ADRs capture implementation decisions made inside this repository while milestone one is being built. They are intentionally narrower than the higher-level product ADRs in `../../resources/rillan/adrs/`.
+These ADRs capture implementation decisions made inside this repository as milestone one and milestone two take shape. They are intentionally narrower than the higher-level product ADRs in `../../resources/rillan/adrs/`.
 
 Current ADRs:
 

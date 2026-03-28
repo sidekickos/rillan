@@ -40,7 +40,7 @@ func LoadWithMode(path string, mode ValidationMode) (Config, error) {
 	}
 
 	applyEnvOverrides(&cfg)
-	applyDerivedDefaults(&cfg)
+	applyDerivedDefaults(&cfg, path)
 
 	if err := ValidateForMode(cfg, mode); err != nil {
 		return Config{}, err
@@ -49,7 +49,7 @@ func LoadWithMode(path string, mode ValidationMode) (Config, error) {
 	return cfg, nil
 }
 
-func applyDerivedDefaults(cfg *Config) {
+func applyDerivedDefaults(cfg *Config, configPath string) {
 	if cfg.Provider.Type == "" {
 		cfg.Provider.Type = ProviderOpenAI
 	}
@@ -82,6 +82,9 @@ func applyDerivedDefaults(cfg *Config) {
 	}
 	if cfg.Server.LogLevel == "" {
 		cfg.Server.LogLevel = "info"
+	}
+	if cfg.Index.Root != "" {
+		cfg.Index.Root = resolveIndexRoot(configPath, cfg.Index.Root)
 	}
 }
 
@@ -200,4 +203,27 @@ func DefaultLogDir() string {
 
 func normalizeString(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func resolveIndexRoot(configPath string, root string) string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return ""
+	}
+
+	if filepath.IsAbs(root) {
+		return filepath.Clean(root)
+	}
+
+	baseDir := "."
+	if configPath != "" {
+		baseDir = filepath.Dir(configPath)
+	}
+
+	resolved := filepath.Join(baseDir, root)
+	if absResolved, err := filepath.Abs(resolved); err == nil {
+		return absResolved
+	}
+
+	return filepath.Clean(resolved)
 }

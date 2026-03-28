@@ -2,7 +2,6 @@ package index
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"github.com/sidekickos/rillan/internal/config"
@@ -19,6 +18,11 @@ func Rebuild(ctx context.Context, cfg config.Config, logger *slog.Logger) (Statu
 	}
 	defer store.Close()
 
+	vectorStore, err := NewVectorStore(cfg.Runtime.VectorStoreMode)
+	if err != nil {
+		return Status{}, err
+	}
+
 	runID, err := store.RecordRunStart(ctx, cfg.Index.Root)
 	if err != nil {
 		return Status{}, err
@@ -32,19 +36,16 @@ func Rebuild(ctx context.Context, cfg config.Config, logger *slog.Logger) (Statu
 
 	documents := make([]DocumentRecord, 0, len(files))
 	chunks := make([]ChunkRecord, 0)
-	vectors := make([]VectorRecord, 0)
 	for _, file := range files {
 		documents = append(documents, BuildDocument(file))
 		fileChunks := ChunkFile(file, cfg.Index.ChunkSizeLines)
 		chunks = append(chunks, fileChunks...)
-		for _, chunk := range fileChunks {
-			embedding := PlaceholderEmbedding(chunk.Content)
-			vectors = append(vectors, VectorRecord{
-				ChunkID:    chunk.ID,
-				Dimensions: len(embedding),
-				Embedding:  EncodeEmbedding(embedding),
-			})
-		}
+	}
+
+	vectors, err := vectorStore.BuildRecords(ctx, chunks)
+	if err != nil {
+		_ = store.RecordRunCompletion(ctx, runID, RunStatusFailed, 0, 0, 0, err.Error())
+		return Status{}, err
 	}
 
 	if err := store.ReplaceAll(ctx, documents, chunks, vectors); err != nil {
@@ -58,6 +59,7 @@ func Rebuild(ctx context.Context, cfg config.Config, logger *slog.Logger) (Statu
 
 	logger.Info("index rebuild completed",
 		"root", cfg.Index.Root,
+		"vector_store", vectorStore.Mode(),
 		"documents", len(documents),
 		"chunks", len(chunks),
 		"vectors", len(vectors),
@@ -66,7 +68,7 @@ func Rebuild(ctx context.Context, cfg config.Config, logger *slog.Logger) (Statu
 	return store.ReadStatus(ctx)
 }
 
-func ReadStatus(ctx context.Context) (Status, error) {
+func ReadStatus(ctx context.Context, cfg config.Config) (Status, error) {
 	store, err := OpenStore(DefaultDBPath())
 	if err != nil {
 		return Status{}, err
@@ -77,8 +79,6 @@ func ReadStatus(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	if status.RootPath == "" {
-		status.RootPath = fmt.Sprintf("not yet configured")
-	}
+	status.ConfiguredRootPath = cfg.Index.Root
 	return status, nil
 }

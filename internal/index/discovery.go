@@ -27,6 +27,14 @@ func DiscoverFiles(cfg config.IndexConfig) ([]SourceFile, error) {
 		return nil, fmt.Errorf("resolve index root: %w", err)
 	}
 
+	rootInfo, err := os.Stat(absRoot)
+	if err != nil {
+		return nil, fmt.Errorf("stat index root: %w", err)
+	}
+	if !rootInfo.IsDir() {
+		return nil, fmt.Errorf("index root must be a directory")
+	}
+
 	files := make([]SourceFile, 0)
 	err = filepath.WalkDir(absRoot, func(filePath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -107,23 +115,62 @@ func shouldSkipDir(name string) bool {
 }
 
 func matchesPattern(value string, patterns []string) bool {
+	value = filepath.ToSlash(strings.TrimSpace(value))
+	base := path.Base(value)
+
 	for _, pattern := range patterns {
 		cleanPattern := filepath.ToSlash(strings.TrimSpace(pattern))
 		if cleanPattern == "" {
 			continue
 		}
-		if strings.ContainsAny(cleanPattern, "*?[") {
-			matched, err := path.Match(cleanPattern, value)
-			if err == nil && matched {
-				return true
-			}
-			continue
-		}
 		if value == cleanPattern || strings.HasPrefix(value, cleanPattern+"/") {
+			return true
+		}
+		if matchesGlob(cleanPattern, value) {
+			return true
+		}
+		if !strings.Contains(cleanPattern, "/") && matchesGlob(cleanPattern, base) {
 			return true
 		}
 	}
 	return false
+}
+
+func matchesGlob(pattern string, value string) bool {
+	if !strings.ContainsAny(pattern, "*?[") {
+		return false
+	}
+
+	patternSegments := strings.Split(pattern, "/")
+	valueSegments := strings.Split(value, "/")
+	return matchPathSegments(patternSegments, valueSegments)
+}
+
+func matchPathSegments(patternSegments []string, valueSegments []string) bool {
+	if len(patternSegments) == 0 {
+		return len(valueSegments) == 0
+	}
+
+	if patternSegments[0] == "**" {
+		if matchPathSegments(patternSegments[1:], valueSegments) {
+			return true
+		}
+		if len(valueSegments) == 0 {
+			return false
+		}
+		return matchPathSegments(patternSegments, valueSegments[1:])
+	}
+
+	if len(valueSegments) == 0 {
+		return false
+	}
+
+	matched, err := path.Match(patternSegments[0], valueSegments[0])
+	if err != nil || !matched {
+		return false
+	}
+
+	return matchPathSegments(patternSegments[1:], valueSegments[1:])
 }
 
 func isIndexableText(data []byte) bool {

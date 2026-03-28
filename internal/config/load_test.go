@@ -76,6 +76,30 @@ func TestLoadAppliesIndexDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadResolvesRelativeIndexRootFromConfigDirectory(t *testing.T) {
+	t.Setenv("RILLAN_OPENAI_API_KEY", "test-key")
+
+	configDir := t.TempDir()
+	path := filepath.Join(configDir, "config.yaml")
+	if err := os.WriteFile(path, []byte(`index:
+  root: "../vault"
+runtime:
+  vector_store_mode: "embedded"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	want := filepath.Clean(filepath.Join(configDir, "..", "vault"))
+	if got := cfg.Index.Root; got != want {
+		t.Fatalf("index root = %q, want %q", got, want)
+	}
+}
+
 func TestDefaultPathsAreNonEmpty(t *testing.T) {
 	if DefaultConfigPath() == "" {
 		t.Fatal("DefaultConfigPath returned empty string")

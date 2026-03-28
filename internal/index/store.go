@@ -157,20 +157,21 @@ func (s *Store) ReplaceAll(ctx context.Context, documents []DocumentRecord, chun
 }
 
 func (s *Store) ReadStatus(ctx context.Context) (Status, error) {
-	status := Status{State: RunStatusNeverIndexed, DBPath: s.path}
+	status := Status{LastAttemptState: RunStatusNeverIndexed, DBPath: s.path}
 
 	var (
 		lastRunRoot sql.NullString
 		state       sql.NullString
 		lastError   sql.NullString
+		completedAt sql.NullString
 	)
 
 	err := s.db.QueryRowContext(ctx, `
-		SELECT root_path, status, error_message
+		SELECT root_path, status, error_message, completed_at
 		FROM index_runs
 		ORDER BY id DESC
 		LIMIT 1
-	`).Scan(&lastRunRoot, &state, &lastError)
+	`).Scan(&lastRunRoot, &state, &lastError, &completedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return status, nil
 	}
@@ -179,10 +180,16 @@ func (s *Store) ReadStatus(ctx context.Context) (Status, error) {
 	}
 
 	if state.Valid {
-		status.State = state.String
+		status.LastAttemptState = state.String
+	}
+	if lastRunRoot.Valid {
+		status.LastAttemptRootPath = lastRunRoot.String
 	}
 	if lastError.Valid {
-		status.LastError = lastError.String
+		status.LastAttemptError = lastError.String
+	}
+	if completedAt.Valid {
+		status.LastAttemptAt = parseSQLiteTimestamp(completedAt.String)
 	}
 
 	status.Documents, err = s.countRows(ctx, "documents")
@@ -214,16 +221,11 @@ func (s *Store) ReadStatus(ctx context.Context) (Status, error) {
 	}
 	if err == nil {
 		if successRoot.Valid {
-			status.RootPath = successRoot.String
+			status.CommittedRootPath = successRoot.String
 		}
 		if successCompleted.Valid {
-			parsed, parseErr := time.Parse("2006-01-02 15:04:05", successCompleted.String)
-			if parseErr == nil {
-				status.LastIndexedAt = parsed.UTC()
-			}
+			status.CommittedIndexedAt = parseSQLiteTimestamp(successCompleted.String)
 		}
-	} else if lastRunRoot.Valid {
-		status.RootPath = lastRunRoot.String
 	}
 
 	return status, nil
@@ -242,4 +244,12 @@ func (s *Store) countRows(ctx context.Context, table string) (int, error) {
 		return 0, fmt.Errorf("count rows in %s: %w", table, err)
 	}
 	return count, nil
+}
+
+func parseSQLiteTimestamp(value string) time.Time {
+	parsed, err := time.Parse("2006-01-02 15:04:05", value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed.UTC()
 }

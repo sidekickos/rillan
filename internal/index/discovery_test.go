@@ -51,18 +51,45 @@ func TestDiscoverFilesSkipsSymlinks(t *testing.T) {
 func TestDiscoverFilesSkipsExcludedAndBinaryFiles(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "keep.go"), "package main\n")
+	mustWriteFile(t, filepath.Join(root, "nested", "keep.go"), "package nested\n")
 	mustWriteFile(t, filepath.Join(root, "skip.txt"), "skip")
 	if err := os.WriteFile(filepath.Join(root, "image.bin"), []byte{0, 1, 2}, 0o644); err != nil {
 		t.Fatalf("write binary: %v", err)
 	}
 
-	files, err := DiscoverFiles(config.IndexConfig{Root: root, Excludes: []string{"skip.txt"}, ChunkSizeLines: 10})
+	files, err := DiscoverFiles(config.IndexConfig{Root: root, Includes: []string{"*.go"}, Excludes: []string{"skip.txt"}, ChunkSizeLines: 10})
 	if err != nil {
 		t.Fatalf("DiscoverFiles returned error: %v", err)
 	}
 
-	if len(files) != 1 || files[0].RelativePath != "keep.go" {
+	if len(files) != 2 || files[0].RelativePath != "keep.go" || files[1].RelativePath != "nested/keep.go" {
 		t.Fatalf("unexpected discovered files: %#v", files)
+	}
+}
+
+func TestDiscoverFilesSupportsRecursiveGlobPatterns(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "docs", "guide.md"), "guide")
+	mustWriteFile(t, filepath.Join(root, "nested", "docs", "notes.md"), "notes")
+	mustWriteFile(t, filepath.Join(root, "nested", "docs", "skip.txt"), "skip")
+
+	files, err := DiscoverFiles(config.IndexConfig{Root: root, Includes: []string{"**/*.md"}, ChunkSizeLines: 10})
+	if err != nil {
+		t.Fatalf("DiscoverFiles returned error: %v", err)
+	}
+
+	if len(files) != 2 || files[0].RelativePath != "docs/guide.md" || files[1].RelativePath != "nested/docs/notes.md" {
+		t.Fatalf("unexpected discovered files: %#v", files)
+	}
+}
+
+func TestDiscoverFilesRequiresDirectoryRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "file.txt")
+	mustWriteFile(t, root, "content")
+
+	_, err := DiscoverFiles(config.IndexConfig{Root: root, ChunkSizeLines: 10})
+	if err == nil {
+		t.Fatal("expected non-directory root to fail")
 	}
 }
 

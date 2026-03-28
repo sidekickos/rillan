@@ -38,12 +38,15 @@ type VectorRecord struct {
 }
 
 type Status struct {
-	State         string
-	RootPath      string
-	Documents     int
-	Chunks        int
-	Vectors       int
-	LastError     string
-	LastIndexedAt time.Time
-	DBPath        string
+	ConfiguredRootPath  string
+	LastAttemptState    string
+	LastAttemptRootPath string
+	LastAttemptAt       time.Time
+	LastAttemptError    string
+	CommittedRootPath   string
+	CommittedIndexedAt  time.Time
+	Documents           int
+	Chunks              int
+	Vectors             int
+	DBPath              string
 }

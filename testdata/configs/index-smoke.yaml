@@ -10,7 +10,7 @@ provider:
     api_key: "unused-for-indexing"
 
 index:
-  root: "./testdata/vault/smoke"
+  root: "../vault/smoke"
   includes: []
   excludes:
     - ".git"

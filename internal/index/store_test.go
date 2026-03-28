@@ -17,7 +17,7 @@ func TestOpenStoreBootstrapsSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadStatus returned error: %v", err)
 	}
-	if got, want := status.State, RunStatusNeverIndexed; got != want {
+	if got, want := status.LastAttemptState, RunStatusNeverIndexed; got != want {
 		t.Fatalf("state = %q, want %q", got, want)
 	}
 }
@@ -77,10 +77,22 @@ func TestReadStatusKeepsCommittedCountsAfterFailedRun(t *testing.T) {
 	if got, want := status.Documents, 1; got != want {
 		t.Fatalf("documents = %d, want %d", got, want)
 	}
-	if got, want := status.State, RunStatusFailed; got != want {
+	if got, want := status.LastAttemptState, RunStatusFailed; got != want {
 		t.Fatalf("state = %q, want %q", got, want)
 	}
-	if got, want := status.RootPath, "/root"; got != want {
-		t.Fatalf("root path = %q, want %q", got, want)
+	if got, want := status.LastAttemptRootPath, "/other-root"; got != want {
+		t.Fatalf("last attempt root path = %q, want %q", got, want)
+	}
+	if got, want := status.LastAttemptError, "boom"; got != want {
+		t.Fatalf("last attempt error = %q, want %q", got, want)
+	}
+	if got, want := status.CommittedRootPath, "/root"; got != want {
+		t.Fatalf("committed root path = %q, want %q", got, want)
+	}
+	if status.LastAttemptAt.IsZero() {
+		t.Fatal("expected last attempt timestamp to be recorded")
+	}
+	if status.CommittedIndexedAt.IsZero() {
+		t.Fatal("expected committed indexed timestamp to be recorded")
 	}
 }

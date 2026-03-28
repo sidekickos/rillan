@@ -38,6 +38,13 @@ Related local directories:
 - data: macOS `~/Library/Application Support/rillan/data`, Linux `${XDG_DATA_HOME:-~/.local/share}/rillan`
 - logs: macOS `~/Library/Logs/rillan`, Linux `${XDG_STATE_HOME:-~/.local/state}/rillan/logs`
 
+Filesystem ownership for milestone two:
+
+- config owns runtime settings only; `rillan init` writes a starter config but does not build the index
+- `index.root` names one local directory to scan; if the value is relative, it is resolved relative to the config file location
+- the data directory owns embedded runtime state, currently `index/index.db` for index runs, documents, chunks, and vectors
+- the logs directory is reserved for daemon log output and stays separate from config and data
+
 Environment overrides:
 
 - `RILLAN_SERVER_HOST`
@@ -84,6 +91,8 @@ Build the local index:
 go run ./cmd/rillan index --config ./testdata/configs/index-smoke.yaml
 go run ./cmd/rillan status --config ./testdata/configs/index-smoke.yaml
 ```
+
+`rillan status` reports the configured root, current counts, the last successful index time, the last indexing error if any, and the SQLite database path.
 
 Check health:
 

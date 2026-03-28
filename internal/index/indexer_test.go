@@ -55,3 +55,24 @@ func TestIndexerRemovesDeletedFilesOnReindex(t *testing.T) {
 		t.Fatalf("documents = %d, want %d", got, want)
 	}
 }
+
+func TestReadStatusFallsBackToConfiguredRootBeforeFirstIndex(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", filepath.Join(t.TempDir(), "data"))
+
+	cfg := config.DefaultConfig()
+	cfg.Index.Root = filepath.Join(t.TempDir(), "vault")
+
+	status, err := ReadStatus(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("ReadStatus returned error: %v", err)
+	}
+	if got, want := status.ConfiguredRootPath, cfg.Index.Root; got != want {
+		t.Fatalf("configured root path = %q, want %q", got, want)
+	}
+	if got, want := status.LastAttemptState, RunStatusNeverIndexed; got != want {
+		t.Fatalf("state = %q, want %q", got, want)
+	}
+	if got := status.CommittedRootPath; got != "" {
+		t.Fatalf("committed root path = %q, want empty", got)
+	}
+}

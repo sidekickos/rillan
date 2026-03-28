@@ -25,7 +25,7 @@ func newIndexCommand() *cobra.Command {
 				return err
 			}
 
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "index complete\nroot: %s\ndocuments: %d\nchunks: %d\nvectors: %d\n", status.RootPath, status.Documents, status.Chunks, status.Vectors)
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "index complete\nroot: %s\ndocuments: %d\nchunks: %d\nvectors: %d\ndb_path: %s\n", status.CommittedRootPath, status.Documents, status.Chunks, status.Vectors, status.DBPath)
 			return err
 		},
 	}
