@@ -13,11 +13,12 @@ var ErrApprovalRequired = errors.New("action approval required")
 
 type ApprovalGate struct {
 	recorder audit.Recorder
+	store    *ProposalStore
 	counter  atomic.Uint64
 }
 
 func NewApprovalGate(recorder audit.Recorder) *ApprovalGate {
-	return &ApprovalGate{recorder: recorder}
+	return &ApprovalGate{recorder: recorder, store: NewProposalStore()}
 }
 
 func (g *ApprovalGate) Propose(ctx context.Context, requestID string, req ActionRequest) (ActionProposal, error) {
@@ -32,8 +33,39 @@ func (g *ApprovalGate) Propose(ctx context.Context, requestID string, req Action
 		RequestID: requestID,
 		Status:    "pending",
 	}
+	g.store.Put(proposal)
 	g.record(ctx, audit.Event{Type: audit.EventTypeAgentProposal, RequestID: requestID, Verdict: proposal.Status, Reason: string(req.Kind)})
 	return proposal, nil
+}
+
+func (g *ApprovalGate) Resolve(ctx context.Context, proposalID string, approved bool, execute func(context.Context) error) (ActionProposal, error) {
+	proposal, err := g.store.Get(proposalID)
+	if err != nil {
+		return ActionProposal{}, err
+	}
+	if proposal.Status != "pending" {
+		return proposal, fmt.Errorf("proposal %s is already %s", proposal.ID, proposal.Status)
+	}
+	status := "approved"
+	eventType := audit.EventTypeAgentApproved
+	if !approved {
+		status = "denied"
+		eventType = audit.EventTypeAgentDenied
+	}
+	updated, err := g.store.UpdateStatus(proposalID, status)
+	if err != nil {
+		return ActionProposal{}, err
+	}
+	g.record(ctx, audit.Event{Type: eventType, RequestID: updated.RequestID, Verdict: updated.Status, Reason: string(updated.Kind)})
+	if !approved {
+		return updated, ErrApprovalRequired
+	}
+	if execute != nil {
+		if err := execute(ctx); err != nil {
+			return updated, err
+		}
+	}
+	return updated, nil
 }
 
 func (g *ApprovalGate) Execute(ctx context.Context, proposal ActionProposal, approved bool, execute func(context.Context) error) error {

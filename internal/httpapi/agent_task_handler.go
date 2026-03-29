@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/sidekickos/rillan/internal/agent"
-	"github.com/sidekickos/rillan/internal/audit"
 	internalopenai "github.com/sidekickos/rillan/internal/openai"
 )
 
@@ -31,14 +30,17 @@ type AgentTaskHandler struct {
 	gate   *agent.ApprovalGate
 }
 
-func NewAgentTaskHandler(logger *slog.Logger, recorder audit.Recorder) *AgentTaskHandler {
+func NewAgentTaskHandler(logger *slog.Logger, gate *agent.ApprovalGate) *AgentTaskHandler {
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if gate == nil {
+		gate = agent.NewApprovalGate(nil)
 	}
 	return &AgentTaskHandler{
 		logger: logger,
 		runner: agent.NewRunner(),
-		gate:   agent.NewApprovalGate(recorder),
+		gate:   gate,
 	}
 }
 

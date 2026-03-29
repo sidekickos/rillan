@@ -98,3 +98,22 @@ func TestApprovalGateExecuteApprovedRunsCallbackAndRecordsAudit(t *testing.T) {
 		t.Fatalf("last event type = %q, want %q", got, want)
 	}
 }
+
+func TestApprovalGateResolveFindsAndUpdatesStoredProposal(t *testing.T) {
+	store, err := audit.NewStore(filepath.Join(t.TempDir(), "audit", "ledger.jsonl"))
+	if err != nil {
+		t.Fatalf("NewStore returned error: %v", err)
+	}
+	gate := NewApprovalGate(store)
+	proposal, err := gate.Propose(context.Background(), "req-1", ActionRequest{Kind: ActionKindApplyPatch, Summary: "apply a repo patch"})
+	if err != nil {
+		t.Fatalf("Propose returned error: %v", err)
+	}
+	updated, err := gate.Resolve(context.Background(), proposal.ID, true, nil)
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+	if got, want := updated.Status, "approved"; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+}

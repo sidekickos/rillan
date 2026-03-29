@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/sidekickos/rillan/internal/agent"
 	"github.com/sidekickos/rillan/internal/audit"
 	"github.com/sidekickos/rillan/internal/classify"
 	"github.com/sidekickos/rillan/internal/config"
@@ -32,6 +33,7 @@ type RouterOptions struct {
 
 func NewRouter(logger *slog.Logger, provider providers.Provider, cfg config.Config, opts RouterOptions) http.Handler {
 	mux := http.NewServeMux()
+	gate := agent.NewApprovalGate(opts.AuditRecorder)
 	mux.HandleFunc("GET /healthz", HealthHandler)
 	mux.HandleFunc("GET /readyz", ReadyHandler(provider, opts.OllamaChecker, ReadinessInfo{
 		RetrievalMode:      opts.RetrievalMode,
@@ -39,7 +41,8 @@ func NewRouter(logger *slog.Logger, provider providers.Provider, cfg config.Conf
 		AuditLedgerPath:    opts.AuditLedgerPath,
 		LocalModelRequired: opts.LocalModelRequired,
 	}))
-	mux.Handle("/v1/agent/tasks", NewAgentTaskHandler(logger, opts.AuditRecorder))
+	mux.Handle("/v1/agent/tasks", NewAgentTaskHandler(logger, gate))
+	mux.Handle("/v1/agent/proposals/", NewAgentProposalHandler(logger, gate))
 
 	handlerOpts := make([]ChatCompletionsHandlerOption, 0, 4)
 	if opts.ProjectConfig.Name != "" {

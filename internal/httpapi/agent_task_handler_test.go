@@ -19,7 +19,7 @@ func TestAgentTaskHandlerReturnsOrchestrationResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore returned error: %v", err)
 	}
-	handler := NewAgentTaskHandler(nil, store)
+	handler := NewAgentTaskHandler(nil, agent.NewApprovalGate(store))
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/agent/tasks", strings.NewReader(`{"goal":"review repo risk","execution_mode":"plan_first"}`))
 
@@ -45,7 +45,7 @@ func TestAgentTaskHandlerReturnsProposalInsteadOfExecuting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore returned error: %v", err)
 	}
-	handler := NewAgentTaskHandler(nil, store)
+	handler := NewAgentTaskHandler(nil, agent.NewApprovalGate(store))
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/agent/tasks", strings.NewReader(`{"goal":"patch repo","proposed_action":{"kind":"apply_patch","summary":"apply patch to repo"}}`))
 
@@ -126,5 +126,74 @@ func TestAgentTaskHandlerAcceptsOptionalMCPSnapshot(t *testing.T) {
 
 	if got, want := recorder.Code, http.StatusOK; got != want {
 		t.Fatalf("status = %d, want %d", got, want)
+	}
+}
+
+func TestAgentProposalHandlerApprovesPendingProposal(t *testing.T) {
+	store, err := audit.NewStore(filepath.Join(t.TempDir(), "audit", "ledger.jsonl"))
+	if err != nil {
+		t.Fatalf("NewStore returned error: %v", err)
+	}
+	gate := agent.NewApprovalGate(store)
+	taskHandler := NewAgentTaskHandler(nil, gate)
+	proposalHandler := NewAgentProposalHandler(nil, gate)
+
+	taskRecorder := httptest.NewRecorder()
+	taskRequest := httptest.NewRequest(http.MethodPost, "/v1/agent/tasks", strings.NewReader(`{"goal":"patch repo","proposed_action":{"kind":"apply_patch","summary":"apply patch to repo"}}`))
+	taskHandler.ServeHTTP(taskRecorder, taskRequest)
+	var taskResponse AgentTaskResponse
+	if err := json.Unmarshal(taskRecorder.Body.Bytes(), &taskResponse); err != nil {
+		t.Fatalf("Unmarshal returned error: %v", err)
+	}
+	if taskResponse.Proposal == nil {
+		t.Fatal("expected proposal in task response")
+	}
+
+	decisionRecorder := httptest.NewRecorder()
+	decisionRequest := httptest.NewRequest(http.MethodPost, "/v1/agent/proposals/"+taskResponse.Proposal.ID+"/decision", strings.NewReader(`{"approved":true}`))
+	proposalHandler.ServeHTTP(decisionRecorder, decisionRequest)
+
+	if got, want := decisionRecorder.Code, http.StatusOK; got != want {
+		t.Fatalf("status = %d, want %d", got, want)
+	}
+	var proposal agent.ActionProposal
+	if err := json.Unmarshal(decisionRecorder.Body.Bytes(), &proposal); err != nil {
+		t.Fatalf("Unmarshal returned error: %v", err)
+	}
+	if got, want := proposal.Status, "approved"; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+}
+
+func TestAgentProposalHandlerDeniesPendingProposal(t *testing.T) {
+	store, err := audit.NewStore(filepath.Join(t.TempDir(), "audit", "ledger.jsonl"))
+	if err != nil {
+		t.Fatalf("NewStore returned error: %v", err)
+	}
+	gate := agent.NewApprovalGate(store)
+	taskHandler := NewAgentTaskHandler(nil, gate)
+	proposalHandler := NewAgentProposalHandler(nil, gate)
+
+	taskRecorder := httptest.NewRecorder()
+	taskRequest := httptest.NewRequest(http.MethodPost, "/v1/agent/tasks", strings.NewReader(`{"goal":"patch repo","proposed_action":{"kind":"run_tests","summary":"run targeted tests"}}`))
+	taskHandler.ServeHTTP(taskRecorder, taskRequest)
+	var taskResponse AgentTaskResponse
+	if err := json.Unmarshal(taskRecorder.Body.Bytes(), &taskResponse); err != nil {
+		t.Fatalf("Unmarshal returned error: %v", err)
+	}
+
+	decisionRecorder := httptest.NewRecorder()
+	decisionRequest := httptest.NewRequest(http.MethodPost, "/v1/agent/proposals/"+taskResponse.Proposal.ID+"/decision", strings.NewReader(`{"approved":false}`))
+	proposalHandler.ServeHTTP(decisionRecorder, decisionRequest)
+
+	if got, want := decisionRecorder.Code, http.StatusOK; got != want {
+		t.Fatalf("status = %d, want %d", got, want)
+	}
+	var proposal agent.ActionProposal
+	if err := json.Unmarshal(decisionRecorder.Body.Bytes(), &proposal); err != nil {
+		t.Fatalf("Unmarshal returned error: %v", err)
+	}
+	if got, want := proposal.Status, "denied"; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
 	}
 }
