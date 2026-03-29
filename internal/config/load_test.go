@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sidekickos/rillan/internal/secretstore"
+	keyring "github.com/zalando/go-keyring"
 )
 
 func TestLoadAppliesEnvOverrides(t *testing.T) {
@@ -56,6 +59,9 @@ func TestLoadDefaultsProviderTypeToOpenAI(t *testing.T) {
 
 	if got, want := cfg.Provider.Type, ProviderOpenAI; got != want {
 		t.Fatalf("provider.type = %q, want %q", got, want)
+	}
+	if got, want := cfg.SchemaVersion, SchemaVersionV2; got != want {
+		t.Fatalf("schema_version = %d, want %d", got, want)
 	}
 }
 
@@ -246,6 +252,119 @@ func TestDefaultPathsAreNonEmpty(t *testing.T) {
 	}
 }
 
+func TestLoadInitializesSchemaV2Registries(t *testing.T) {
+	t.Setenv("RILLAN_OPENAI_API_KEY", "test-key")
+
+	path := writeTempConfig(t, `runtime:
+  vector_store_mode: "embedded"
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if cfg.LLMs.Providers == nil {
+		t.Fatal("expected llm providers to be initialized")
+	}
+	if cfg.MCPs.Servers == nil {
+		t.Fatal("expected mcp servers to be initialized")
+	}
+}
+
+func TestLoadForEditReturnsDefaultsWhenConfigMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing", "config.yaml")
+
+	cfg, err := LoadForEdit(path)
+	if err != nil {
+		t.Fatalf("LoadForEdit returned error: %v", err)
+	}
+
+	if got, want := cfg.SchemaVersion, SchemaVersionV2; got != want {
+		t.Fatalf("schema_version = %d, want %d", got, want)
+	}
+	if cfg.LLMs.Providers == nil {
+		t.Fatal("expected llm providers to be initialized")
+	}
+	if cfg.MCPs.Servers == nil {
+		t.Fatal("expected mcp servers to be initialized")
+	}
+}
+
+func TestWritePersistsSchemaV2Config(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	cfg := DefaultConfig()
+	cfg.LLMs.Default = "work-gpt"
+	cfg.LLMs.Providers = append(cfg.LLMs.Providers, LLMProviderConfig{
+		ID:           "work-gpt",
+		Type:         ProviderOpenAI,
+		Endpoint:     "https://api.openai.com/v1",
+		AuthStrategy: AuthStrategyBrowserOIDC,
+	})
+
+	if err := Write(path, cfg); err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+
+	reloaded, err := LoadForEdit(path)
+	if err != nil {
+		t.Fatalf("LoadForEdit returned error: %v", err)
+	}
+
+	if got, want := reloaded.LLMs.Default, "work-gpt"; got != want {
+		t.Fatalf("llms.default = %q, want %q", got, want)
+	}
+	if got, want := len(reloaded.LLMs.Providers), 1; got != want {
+		t.Fatalf("len(llms.providers) = %d, want %d", got, want)
+	}
+}
+
+func TestLoadResolvesSelectedLLMProviderFromCredentialStore(t *testing.T) {
+	store := map[string]string{}
+	secretstore.SetKeyringSetForTest(func(service string, user string, password string) error {
+		store[service+"/"+user] = password
+		return nil
+	})
+	secretstore.SetKeyringGetForTest(func(service string, user string) (string, error) {
+		value, ok := store[service+"/"+user]
+		if !ok {
+			return "", keyring.ErrNotFound
+		}
+		return value, nil
+	})
+	t.Cleanup(func() {
+		secretstore.SetKeyringSetForTest(keyring.Set)
+		secretstore.SetKeyringGetForTest(keyring.Get)
+	})
+
+	if err := secretstore.Save("keyring://rillan/llm/work-gpt", secretstore.Credential{Kind: "api_key", APIKey: "secret-key", Endpoint: "https://api.openai.com/v1", AuthStrategy: AuthStrategyAPIKey}); err != nil {
+		t.Fatalf("Save returned error: %v", err)
+	}
+	path := writeTempConfig(t, `schema_version: 2
+llms:
+  default: "work-gpt"
+  providers:
+    - id: "work-gpt"
+      type: "openai"
+      endpoint: "https://api.openai.com/v1"
+      auth_strategy: "api_key"
+      credential_ref: "keyring://rillan/llm/work-gpt"
+runtime:
+  vector_store_mode: "embedded"
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if got, want := cfg.Provider.Type, ProviderOpenAI; got != want {
+		t.Fatalf("provider.type = %q, want %q", got, want)
+	}
+	if got, want := cfg.Provider.OpenAI.APIKey, "secret-key"; got != want {
+		t.Fatalf("provider.openai.api_key = %q, want %q", got, want)
+	}
+}
+
 func TestLoadProjectAppliesDefaultsAndResolvesRelativeSourcePaths(t *testing.T) {
 	projectDir := t.TempDir()
 	projectPath := filepath.Join(projectDir, ".sidekick", "project.yaml")
@@ -269,6 +388,32 @@ func TestLoadProjectAppliesDefaultsAndResolvesRelativeSourcePaths(t *testing.T) 
 	}
 	if got, want := cfg.Sources[0].Path, filepath.Join(projectDir, ".sidekick", "src"); got != want {
 		t.Fatalf("sources[0].path = %q, want %q", got, want)
+	}
+}
+
+func TestLoadProjectInitializesProviderAndSkillSelections(t *testing.T) {
+	projectDir := t.TempDir()
+	projectPath := filepath.Join(projectDir, ".sidekick", "project.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
+		t.Fatalf("mkdir project config dir: %v", err)
+	}
+	if err := os.WriteFile(projectPath, []byte("name: \"demo\"\n"), 0o644); err != nil {
+		t.Fatalf("write project config: %v", err)
+	}
+
+	cfg, err := LoadProject(projectPath)
+	if err != nil {
+		t.Fatalf("LoadProject returned error: %v", err)
+	}
+
+	if cfg.Providers.LLMAllowed == nil {
+		t.Fatal("expected providers.llm_allowed to be initialized")
+	}
+	if cfg.Providers.MCPEnabled == nil {
+		t.Fatal("expected providers.mcp_enabled to be initialized")
+	}
+	if cfg.Agent.Skills.Enabled == nil {
+		t.Fatal("expected agent.skills.enabled to be initialized")
 	}
 }
 

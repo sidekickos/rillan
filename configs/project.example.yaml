@@ -13,6 +13,15 @@ routing:
     code_generation: "prefer_local"
     review: "prefer_local"
 
+providers:
+  llm_default: "openai"
+  llm_allowed: ["openai"]
+  mcp_enabled: []
+
+agent:
+  skills:
+    enabled: []
+
 system_prompt: ""
 
 instructions:

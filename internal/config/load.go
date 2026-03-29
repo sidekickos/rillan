@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/sidekickos/rillan/internal/secretstore"
 	"gopkg.in/yaml.v3"
 )
 
@@ -23,6 +24,27 @@ const (
 
 func Load(path string) (Config, error) {
 	return LoadWithMode(path, ValidationModeServe)
+}
+
+func LoadForEdit(path string) (Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			cfg := DefaultConfig()
+			applyDerivedDefaults(&cfg, path)
+			return cfg, nil
+		}
+		return Config{}, fmt.Errorf("read config: %w", err)
+	}
+
+	cfg := DefaultConfig()
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return Config{}, fmt.Errorf("parse config: %w", err)
+	}
+
+	applyDerivedDefaults(&cfg, path)
+
+	return cfg, nil
 }
 
 func LoadProject(path string) (ProjectConfig, error) {
@@ -88,6 +110,7 @@ func LoadWithMode(path string, mode ValidationMode) (Config, error) {
 
 	applyEnvOverrides(&cfg)
 	applyDerivedDefaults(&cfg, path)
+	applySelectedLLMProvider(&cfg)
 
 	if err := ValidateForMode(cfg, mode); err != nil {
 		return Config{}, err
@@ -96,7 +119,71 @@ func LoadWithMode(path string, mode ValidationMode) (Config, error) {
 	return cfg, nil
 }
 
+func Write(path string, cfg Config) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create config directory: %w", err)
+	}
+
+	output := cfg
+	if output.SchemaVersion >= SchemaVersionV2 {
+		output.Provider.OpenAI.APIKey = ""
+		output.Provider.Anthropic.APIKey = ""
+	}
+	data, err := yaml.Marshal(output)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+
+	return nil
+}
+
+func applySelectedLLMProvider(cfg *Config) {
+	if cfg.SchemaVersion < SchemaVersionV2 || cfg.LLMs.Default == "" {
+		return
+	}
+	var selected *LLMProviderConfig
+	for i := range cfg.LLMs.Providers {
+		if cfg.LLMs.Providers[i].ID == cfg.LLMs.Default {
+			selected = &cfg.LLMs.Providers[i]
+			break
+		}
+	}
+	if selected == nil {
+		return
+	}
+	binding := secretstore.Binding{
+		Endpoint:     strings.TrimSpace(selected.Endpoint),
+		AuthStrategy: strings.TrimSpace(selected.AuthStrategy),
+	}
+	secret, err := secretstore.ResolveBearer(strings.TrimSpace(selected.CredentialRef), binding)
+	if err != nil {
+		secret = ""
+	}
+	baseURL := strings.TrimSpace(selected.Endpoint)
+	if baseURL == "" {
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(selected.Type)) {
+	case ProviderAnthropic:
+		cfg.Provider.Type = ProviderAnthropic
+		cfg.Provider.Anthropic.Enabled = true
+		cfg.Provider.Anthropic.BaseURL = baseURL
+		cfg.Provider.Anthropic.APIKey = secret
+	case ProviderOpenAI, ProviderOpenAICompatible, ProviderKimi, ProviderLocal:
+		cfg.Provider.Type = ProviderOpenAI
+		cfg.Provider.OpenAI.BaseURL = baseURL
+		cfg.Provider.OpenAI.APIKey = secret
+	}
+}
+
 func applyDerivedDefaults(cfg *Config, configPath string) {
+	if cfg.SchemaVersion == 0 {
+		cfg.SchemaVersion = SchemaVersionV2
+	}
 	if cfg.Provider.Type == "" {
 		cfg.Provider.Type = ProviderOpenAI
 	}
@@ -157,6 +244,12 @@ func applyDerivedDefaults(cfg *Config, configPath string) {
 	if cfg.Index.Root != "" {
 		cfg.Index.Root = resolveIndexRoot(configPath, cfg.Index.Root)
 	}
+	if cfg.LLMs.Providers == nil {
+		cfg.LLMs.Providers = []LLMProviderConfig{}
+	}
+	if cfg.MCPs.Servers == nil {
+		cfg.MCPs.Servers = []MCPServerConfig{}
+	}
 }
 
 func applyProjectDerivedDefaults(cfg *ProjectConfig, projectPath string) {
@@ -171,6 +264,15 @@ func applyProjectDerivedDefaults(cfg *ProjectConfig, projectPath string) {
 	}
 	if cfg.Sources == nil {
 		cfg.Sources = []ProjectSource{}
+	}
+	if cfg.Providers.LLMAllowed == nil {
+		cfg.Providers.LLMAllowed = []string{}
+	}
+	if cfg.Providers.MCPEnabled == nil {
+		cfg.Providers.MCPEnabled = []string{}
+	}
+	if cfg.Agent.Skills.Enabled == nil {
+		cfg.Agent.Skills.Enabled = []string{}
 	}
 	if cfg.Instructions == nil {
 		cfg.Instructions = []string{}

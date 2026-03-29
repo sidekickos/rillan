@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/sidekickos/rillan/internal/agent/skills"
 )
@@ -63,6 +64,7 @@ func (r *SharedRunner) runSkillInvocations(ctx context.Context, invocations []Sk
 }
 
 func (r *SharedRunner) runSkillInvocation(ctx context.Context, invocation SkillInvocation) (SkillResult, error) {
+	startedAt := time.Now()
 	var payload any
 	var err error
 	switch invocation.Kind {
@@ -82,6 +84,7 @@ func (r *SharedRunner) runSkillInvocation(ctx context.Context, invocation SkillI
 	if err != nil {
 		return SkillResult{}, err
 	}
+	_ = RecordSkillLatency(string(invocation.Kind), time.Since(startedAt), startedAt)
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return SkillResult{}, err

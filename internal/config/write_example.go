@@ -7,22 +7,33 @@ import (
 	"path/filepath"
 )
 
-const exampleConfig = `server:
+const exampleConfig = `schema_version: 2
+
+server:
   host: "127.0.0.1"
   port: 8420
   log_level: "info"
 
-provider:
-  type: "openai"
-  openai:
-    base_url: "https://api.openai.com/v1"
-    api_key: ""
-  anthropic:
-    enabled: false
-    base_url: "https://api.anthropic.com"
-    api_key: ""
-  local:
-    base_url: "http://127.0.0.1:11434"
+auth:
+  rillan:
+    endpoint: ""
+    auth_strategy: ""
+    session_ref: "keyring://rillan/auth/control-plane"
+
+llms:
+  default: "openai"
+  providers:
+    - id: "openai"
+      type: "openai"
+      endpoint: "https://api.openai.com/v1"
+      auth_strategy: "browser_oidc"
+      default_model: "gpt-5"
+      capabilities: ["chat", "reasoning", "tool_calling"]
+      credential_ref: "keyring://rillan/llm/openai"
+
+mcps:
+  default: ""
+  servers: []
 
 index:
   root: ""
@@ -74,6 +85,15 @@ routing:
   task_types:
     code_generation: "prefer_local"
     review: "prefer_local"
+
+providers:
+  llm_default: "openai"
+  llm_allowed: ["openai"]
+  mcp_enabled: []
+
+agent:
+  skills:
+    enabled: []
 
 system_prompt: ""
 

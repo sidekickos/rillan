@@ -1,144 +1,305 @@
 # Rillan
 
-Rillan is a local OpenAI-compatible proxy daemon written in Go. Milestone one delivered the daemon shell, `rillan serve`, `rillan init`, config loading with env overrides, health/readiness endpoints, a validated `/v1/chat/completions` route, and one real outbound provider path through OpenAI-compatible upstreams. Milestone two adds a deterministic local indexing substrate with `rillan index` and `rillan status`, embedded SQLite metadata storage, text/code chunking, and local vector records.
+Rillan is a local OpenAI-compatible proxy daemon written in Go. It sits between your local tools and upstream AI providers, adding local indexing, semantic retrieval, credential management, policy enforcement, and agent orchestration on top of a standard `/v1/chat/completions` interface.
 
-## Current Scope
+## Features
 
-- local API boundary on `127.0.0.1:8420`
-- Cobra CLI with `rillan serve` and `rillan init`
-- YAML-backed runtime config plus env overrides
-- `GET /healthz`
-- `GET /readyz`
-- `POST /v1/chat/completions`
-- structured request logging with request IDs
-- OpenAI-compatible upstream passthrough as the first real provider path
-- one explicit local index root
-- manual `rillan index` rebuilds
-- `rillan status` for local corpus state
-- embedded SQLite metadata, chunk, and vector storage
+- **OpenAI-compatible API** on `127.0.0.1:8420` -- drop-in replacement for local tools that speak the OpenAI protocol
+- **Named LLM providers** -- register multiple providers (OpenAI, Kimi, local models) and switch between them
+- **Named MCP endpoints** -- register Model Context Protocol servers for tool and resource access
+- **Secure credential storage** -- API keys and tokens live in your OS keyring, never in plaintext YAML
+- **Local indexing** -- chunk and embed your codebase into SQLite for semantic retrieval
+- **Markdown skills** -- install reusable instruction sets that shape agent behavior
+- **Project-level config** -- per-repo classification, provider restrictions, and routing rules
+- **Policy enforcement** -- system-level rules for PII masking, credential stripping, and routing constraints
+- **Optional local models** -- Ollama integration for embeddings and query rewriting without leaving your machine
 
-- optional local model helpers via Ollama for real embeddings and query rewriting
-- `rillan status` reports local model connectivity when configured
+## Requirements
 
-Still out of scope: MCP, background file watching, provider failover, and audit ledger work.
-
-## Provider Policy
-
-- OpenAI-compatible upstreams are the default path in milestone one.
-- Anthropic is intentionally non-default and discouraged for now.
-- Anthropic is represented in config only as an explicit future-facing seam; it is not implemented as a runtime provider in milestone one.
-- No unofficial access paths, shared credentials, scraped sessions, or browser-cookie flows are supported.
-
-## Configuration
-
-Default config path:
-
-- macOS: `~/Library/Application Support/rillan/config.yaml`
-- Linux: `${XDG_CONFIG_HOME:-~/.config}/rillan/config.yaml`
-
-Related local directories:
-
-- data: macOS `~/Library/Application Support/rillan/data`, Linux `${XDG_DATA_HOME:-~/.local/share}/rillan`
-- logs: macOS `~/Library/Logs/rillan`, Linux `${XDG_STATE_HOME:-~/.local/state}/rillan/logs`
-
-Filesystem ownership for milestone two:
-
-- config owns runtime settings only; `rillan init` writes a starter config but does not build the index
-- `index.root` names one local directory to scan; if the value is relative, it is resolved relative to the config file location
-- the data directory owns embedded runtime state, currently `index/index.db` for index runs, documents, chunks, and vectors
-- the logs directory is reserved for daemon log output and stays separate from config and data
-
-Environment overrides:
-
-- `RILLAN_SERVER_HOST`
-- `RILLAN_SERVER_PORT`
-- `RILLAN_SERVER_LOG_LEVEL`
-- `RILLAN_PROVIDER_TYPE`
-- `RILLAN_OPENAI_BASE_URL`
-- `RILLAN_OPENAI_API_KEY` or `OPENAI_API_KEY`
-- `RILLAN_ANTHROPIC_ENABLED`
-- `RILLAN_ANTHROPIC_BASE_URL`
-- `RILLAN_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY`
-- `RILLAN_LOCAL_MODEL_BASE_URL`
-- `RILLAN_INDEX_ROOT`
-- `RILLAN_INDEX_INCLUDES`
-- `RILLAN_INDEX_EXCLUDES`
-- `RILLAN_INDEX_CHUNK_SIZE_LINES`
-- `RILLAN_RETRIEVAL_ENABLED`
-- `RILLAN_RETRIEVAL_TOP_K`
-- `RILLAN_RETRIEVAL_MAX_CONTEXT_CHARS`
-- `RILLAN_LOCAL_MODEL_ENABLED`
-- `RILLAN_LOCAL_MODEL_EMBED_MODEL`
-- `RILLAN_LOCAL_MODEL_QUERY_REWRITE_ENABLED`
-- `RILLAN_LOCAL_MODEL_QUERY_REWRITE_MODEL`
-- `RILLAN_VECTOR_STORE_MODE`
-
-Use `configs/rillan.example.yaml` as the checked-in reference config.
+- Go 1.25+ (module requirement)
+- A system keyring (macOS Keychain, GNOME Keyring, KWallet, or Windows Credential Manager)
+- An upstream LLM provider account (e.g., OpenAI API key)
+- Optional: [Ollama](https://ollama.ai) for local embeddings and query rewriting
 
 ## Quickstart
 
-Initialize a starter config:
+### 1. Build
 
 ```bash
-go run ./cmd/rillan init
+go build -o rillan ./cmd/rillan
 ```
 
-Set your OpenAI API key:
+Or run directly with `go run ./cmd/rillan` in place of `rillan` below.
+
+### 2. Initialize configuration
 
 ```bash
-export OPENAI_API_KEY="your-key"
+rillan init
 ```
 
-Start the daemon:
+This writes a starter `config.yaml` to your platform's config directory (see [File Locations](#file-locations)).
+
+### 3. Add an LLM provider
 
 ```bash
-go run ./cmd/rillan serve
+rillan llm add work-gpt \
+  --type openai \
+  --endpoint https://api.openai.com/v1 \
+  --default-model gpt-4o
+
+rillan llm login work-gpt \
+  --api-key "$OPENAI_API_KEY"
+
+rillan llm use work-gpt
 ```
 
-Build the local index:
+### 4. Start the daemon
 
 ```bash
-go run ./cmd/rillan index --config ./testdata/configs/index-smoke.yaml
-go run ./cmd/rillan status --config ./testdata/configs/index-smoke.yaml
+rillan serve
 ```
 
-`rillan status` reports the configured root, current counts, the last successful index time, the last indexing error if any, and the SQLite database path.
-
-Check health:
+### 5. Send a request
 
 ```bash
-curl http://127.0.0.1:8420/healthz
-curl http://127.0.0.1:8420/readyz
-```
+curl -s http://127.0.0.1:8420/healthz
 
-Send a chat completion request:
-
-```bash
 curl -X POST http://127.0.0.1:8420/v1/chat/completions \
   -H 'content-type: application/json' \
-  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}'
-
-# Optional per-request local retrieval override:
-curl -X POST http://127.0.0.1:8420/v1/chat/completions \
-  -H 'content-type: application/json' \
-  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"summarize this repo"}],"retrieval":{"enabled":true,"top_k":4}}'
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"ping"}]}'
 ```
+
+### 6. Index a codebase (optional)
+
+Set `index.root` in your config to point at a local repo, then:
+
+```bash
+rillan index
+rillan status
+```
+
+## CLI Reference
+
+### Core commands
+
+| Command | Description |
+|---------|-------------|
+| `rillan serve` | Start the proxy daemon |
+| `rillan init` | Write starter config files |
+| `rillan index` | Build the local corpus index |
+| `rillan status` | Show index state, corpus counts, and local model connectivity |
+
+### Provider management
+
+| Command | Description |
+|---------|-------------|
+| `rillan llm add <name>` | Register a named LLM provider |
+| `rillan llm remove <name>` | Remove a named LLM provider |
+| `rillan llm list` | List all configured LLM providers |
+| `rillan llm use <name>` | Set the default LLM provider |
+| `rillan llm login <name>` | Store credentials for a provider |
+| `rillan llm logout <name>` | Clear stored credentials |
+
+**`llm add` flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--type` | Provider type: `openai`, `openai_compatible`, `anthropic`, `kimi`, `local` |
+| `--endpoint` | Provider API base URL |
+| `--auth-strategy` | Auth method: `none`, `api_key`, `browser_oidc`, `device_oidc` |
+| `--default-model` | Default model name for requests |
+| `--capability` | Repeatable. Capability tags (e.g., `chat`, `reasoning`, `tool_calling`) |
+
+### MCP endpoint management
+
+| Command | Description |
+|---------|-------------|
+| `rillan mcp add <name>` | Register a named MCP endpoint |
+| `rillan mcp remove <name>` | Remove a named MCP endpoint |
+| `rillan mcp list` | List all configured MCP endpoints |
+| `rillan mcp use <name>` | Set the default MCP endpoint |
+| `rillan mcp login <name>` | Store credentials for an endpoint |
+| `rillan mcp logout <name>` | Clear stored credentials |
+
+**`mcp add` flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--endpoint` | | Endpoint URL |
+| `--transport` | `http` | Transport type: `http`, `stdio` |
+| `--auth-strategy` | `none` | Auth method: `none`, `api_key`, `browser_oidc`, `device_oidc` |
+| `--read-only` | `true` | Restrict to read-only operations |
+
+### Credential flags (shared by `login` subcommands)
+
+| Flag | Description |
+|------|-------------|
+| `--api-key` | API key (for `api_key` auth strategy) |
+| `--access-token` | Access token (for OIDC strategies) |
+| `--refresh-token` | Refresh token |
+| `--id-token` | OIDC ID token |
+| `--issuer` | OIDC issuer URL bound to the session |
+| `--audience` | OIDC audience bound to the session |
+
+### Skill management
+
+| Command | Description |
+|---------|-------------|
+| `rillan skill install <path>` | Copy a markdown skill into managed storage |
+| `rillan skill remove <id>` | Remove an installed skill (`--force` to override project refs) |
+| `rillan skill list` | List installed skills |
+| `rillan skill show <id>` | Show metadata for an installed skill |
+
+### Authentication
+
+| Command | Description |
+|---------|-------------|
+| `rillan auth login` | Log into a Rillan team/control-plane endpoint |
+| `rillan auth logout` | Clear control-plane session |
+| `rillan auth status` | Show control-plane auth state |
+
+`auth` is reserved for Rillan team or control-plane endpoints. Provider-specific auth uses `llm login` and `mcp login`.
+
+### Configuration inspection
+
+| Command | Description |
+|---------|-------------|
+| `rillan config get` | Read a configuration value |
+| `rillan config set` | Write a configuration value |
+| `rillan config list` | List configuration values |
+
+## HTTP API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/healthz` | Liveness probe -- always returns `200` |
+| `GET` | `/readyz` | Readiness probe -- returns `200` when the daemon is ready to serve |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat completion passthrough |
+| `GET` | `/v1/agent/tasks` | Agent task listing |
+| `GET/POST` | `/v1/agent/proposals/` | Agent proposal submission and retrieval |
+
+### Per-request retrieval override
+
+Include a `retrieval` field in the chat completion body to enable local context injection:
+
+```json
+{
+  "model": "gpt-4o",
+  "messages": [{"role": "user", "content": "summarize this repo"}],
+  "retrieval": {"enabled": true, "top_k": 4}
+}
+```
+
+## Configuration
+
+Rillan uses a three-tier configuration hierarchy. See `configs/rillan.example.yaml` and `configs/project.example.yaml` for annotated references.
+
+### Global runtime config
+
+The primary config file stores daemon settings, named LLM providers, named MCP endpoints, and non-secret metadata. Written by `rillan init` and mutated by CLI commands.
+
+Key sections:
+
+| Section | Purpose |
+|---------|---------|
+| `server` | Host, port, log level |
+| `auth` | Control-plane endpoint and session reference |
+| `llms` | Named LLM provider registry with default selection |
+| `mcps` | Named MCP endpoint registry with default selection |
+| `index` | Index root directory, include/exclude globs, chunk size |
+| `retrieval` | Enable/disable retrieval, top-k, max context size |
+| `local_model` | Ollama integration for embeddings and query rewriting |
+| `agent` | Agent and MCP runtime toggles |
+| `runtime` | Vector store mode and local model base URL |
+
+### Project config (repo-local)
+
+Place a `project.yaml` in your repo's `.rillan/` directory to control per-project behavior:
+
+```yaml
+name: "my-project"
+classification: "internal"   # open_source | internal | proprietary | trade_secret
+
+providers:
+  llm_default: "work-gpt"
+  llm_allowed: ["work-gpt", "local-qwen"]
+  mcp_enabled: ["ide-local"]
+
+agent:
+  skills:
+    enabled: ["go-dev"]
+
+instructions:
+  - "Keep outbound context tightly bounded to the current task."
+```
+
+### System config (machine-local)
+
+Encrypted policy and identity rules stored in `system.yaml`. Managed by tooling, not hand-edited.
+
+### Secrets
+
+All secrets (API keys, tokens, OIDC bundles) are stored in the OS keyring. Config files reference them via `keyring://` URIs (e.g., `keyring://rillan/llm/openai`). Never put secrets in YAML.
+
+## File Locations
+
+| Purpose | macOS | Linux |
+|---------|-------|-------|
+| Config | `~/Library/Application Support/rillan/config.yaml` | `${XDG_CONFIG_HOME:-~/.config}/rillan/config.yaml` |
+| Data | `~/Library/Application Support/rillan/data/` | `${XDG_DATA_HOME:-~/.local/share}/rillan/` |
+| Logs | `~/Library/Logs/rillan/` | `${XDG_STATE_HOME:-~/.local/state}/rillan/logs/` |
+
+The data directory holds the SQLite index database (`index/index.db`), installed markdown skills, and skill metrics state.
+
+## Environment Variable Overrides
+
+Environment variables are supported for backward compatibility and CI/automation, but CLI commands are the preferred setup path.
+
+| Variable | Maps to |
+|----------|---------|
+| `RILLAN_SERVER_HOST` | `server.host` |
+| `RILLAN_SERVER_PORT` | `server.port` |
+| `RILLAN_SERVER_LOG_LEVEL` | `server.log_level` |
+| `RILLAN_PROVIDER_TYPE` | `provider.type` |
+| `RILLAN_OPENAI_BASE_URL` | `provider.openai.base_url` |
+| `RILLAN_OPENAI_API_KEY` / `OPENAI_API_KEY` | `provider.openai.api_key` |
+| `RILLAN_INDEX_ROOT` | `index.root` |
+| `RILLAN_INDEX_INCLUDES` | `index.includes` |
+| `RILLAN_INDEX_EXCLUDES` | `index.excludes` |
+| `RILLAN_INDEX_CHUNK_SIZE_LINES` | `index.chunk_size_lines` |
+| `RILLAN_RETRIEVAL_ENABLED` | `retrieval.enabled` |
+| `RILLAN_RETRIEVAL_TOP_K` | `retrieval.top_k` |
+| `RILLAN_RETRIEVAL_MAX_CONTEXT_CHARS` | `retrieval.max_context_chars` |
+| `RILLAN_LOCAL_MODEL_ENABLED` | `local_model.enabled` |
+| `RILLAN_LOCAL_MODEL_BASE_URL` | `local_model.base_url` |
+| `RILLAN_LOCAL_MODEL_EMBED_MODEL` | `local_model.embed_model` |
+| `RILLAN_LOCAL_MODEL_QUERY_REWRITE_ENABLED` | `local_model.query_rewrite.enabled` |
+| `RILLAN_LOCAL_MODEL_QUERY_REWRITE_MODEL` | `local_model.query_rewrite.model` |
+| `RILLAN_VECTOR_STORE_MODE` | `runtime.vector_store_mode` |
+
+## Provider Policy
+
+- OpenAI-compatible upstreams are the default provider path.
+- Anthropic is represented in config as a future-facing seam but is not implemented as a runtime provider.
+- No unofficial access paths, shared credentials, scraped sessions, or browser-cookie flows are supported.
 
 ## Development
 
-Run tests:
+See [docs/development.md](docs/development.md) for build instructions, test conventions, and contribution guidance.
 
-```bash
-go test ./...
-go test -cover ./...
-```
+See [docs/architecture.md](docs/architecture.md) for a walkthrough of internal packages and data flow.
 
-Build the binary:
+## Architecture Decisions
 
-```bash
-go build ./...
-```
+Repo-local ADRs are in [`adrs/`](adrs/):
 
-## Repository Decisions
+- **ADR-001** -- OpenAI-compatible upstream as the first real provider path
+- **ADR-002** -- Localhost bind and local config/data/log defaults
+- **ADR-003** -- One explicit local root, manual indexing, and embedded SQLite storage
 
-Repo-local architecture decisions are documented in `adrs/` while the codebase is still small and changing quickly.
+## Deployment
+
+Systemd and launchd unit files are in `packaging/`:
+
+- `packaging/systemd/` -- Linux service files
+- `packaging/launchd/` -- macOS plist daemon files

@@ -3,8 +3,19 @@ package config
 import "log/slog"
 
 const (
-	ProviderOpenAI    = "openai"
-	ProviderAnthropic = "anthropic"
+	SchemaVersionV1 = 1
+	SchemaVersionV2 = 2
+
+	ProviderOpenAI           = "openai"
+	ProviderOpenAICompatible = "openai_compatible"
+	ProviderAnthropic        = "anthropic"
+	ProviderKimi             = "kimi"
+	ProviderLocal            = "local"
+
+	AuthStrategyNone        = "none"
+	AuthStrategyAPIKey      = "api_key"
+	AuthStrategyBrowserOIDC = "browser_oidc"
+	AuthStrategyDeviceOIDC  = "device_oidc"
 
 	SystemConfigVersion           = "m06"
 	SystemEncryptionKeyringAESGCM = "keyring_aes_gcm"
@@ -23,13 +34,56 @@ const (
 )
 
 type Config struct {
-	Server     ServerConfig       `yaml:"server"`
-	Provider   ProviderConfig     `yaml:"provider"`
-	Index      IndexConfig        `yaml:"index"`
-	Retrieval  RetrievalConfig    `yaml:"retrieval"`
-	Runtime    RuntimeConfig      `yaml:"runtime"`
-	LocalModel LocalModelConfig   `yaml:"local_model"`
-	Agent      AgentRuntimeConfig `yaml:"agent"`
+	SchemaVersion int                `yaml:"schema_version,omitempty"`
+	Server        ServerConfig       `yaml:"server"`
+	Provider      ProviderConfig     `yaml:"provider"`
+	Index         IndexConfig        `yaml:"index"`
+	Retrieval     RetrievalConfig    `yaml:"retrieval"`
+	Runtime       RuntimeConfig      `yaml:"runtime"`
+	LocalModel    LocalModelConfig   `yaml:"local_model"`
+	Agent         AgentRuntimeConfig `yaml:"agent"`
+	Auth          AuthConfig         `yaml:"auth,omitempty"`
+	LLMs          LLMRegistryConfig  `yaml:"llms,omitempty"`
+	MCPs          MCPRegistryConfig  `yaml:"mcps,omitempty"`
+}
+
+type AuthConfig struct {
+	Rillan ControlPlaneAuthConfig `yaml:"rillan,omitempty"`
+}
+
+type ControlPlaneAuthConfig struct {
+	Endpoint     string `yaml:"endpoint,omitempty"`
+	AuthStrategy string `yaml:"auth_strategy,omitempty"`
+	SessionRef   string `yaml:"session_ref,omitempty"`
+}
+
+type LLMRegistryConfig struct {
+	Default   string              `yaml:"default,omitempty"`
+	Providers []LLMProviderConfig `yaml:"providers,omitempty"`
+}
+
+type LLMProviderConfig struct {
+	ID            string   `yaml:"id,omitempty"`
+	Type          string   `yaml:"type,omitempty"`
+	Endpoint      string   `yaml:"endpoint,omitempty"`
+	AuthStrategy  string   `yaml:"auth_strategy,omitempty"`
+	DefaultModel  string   `yaml:"default_model,omitempty"`
+	Capabilities  []string `yaml:"capabilities,omitempty"`
+	CredentialRef string   `yaml:"credential_ref,omitempty"`
+}
+
+type MCPRegistryConfig struct {
+	Default string            `yaml:"default,omitempty"`
+	Servers []MCPServerConfig `yaml:"servers,omitempty"`
+}
+
+type MCPServerConfig struct {
+	ID           string `yaml:"id,omitempty"`
+	Endpoint     string `yaml:"endpoint,omitempty"`
+	Transport    string `yaml:"transport,omitempty"`
+	AuthStrategy string `yaml:"auth_strategy,omitempty"`
+	ReadOnly     bool   `yaml:"read_only,omitempty"`
+	SessionRef   string `yaml:"session_ref,omitempty"`
 }
 
 type SystemConfig struct {
@@ -65,12 +119,28 @@ type SystemPolicyRules struct {
 }
 
 type ProjectConfig struct {
-	Name           string               `yaml:"name"`
-	Classification string               `yaml:"classification"`
-	Sources        []ProjectSource      `yaml:"sources"`
-	Routing        ProjectRoutingConfig `yaml:"routing"`
-	SystemPrompt   string               `yaml:"system_prompt"`
-	Instructions   []string             `yaml:"instructions"`
+	Name           string                         `yaml:"name"`
+	Classification string                         `yaml:"classification"`
+	Sources        []ProjectSource                `yaml:"sources"`
+	Routing        ProjectRoutingConfig           `yaml:"routing"`
+	Providers      ProjectProviderSelectionConfig `yaml:"providers,omitempty"`
+	Agent          ProjectAgentConfig             `yaml:"agent,omitempty"`
+	SystemPrompt   string                         `yaml:"system_prompt"`
+	Instructions   []string                       `yaml:"instructions"`
+}
+
+type ProjectProviderSelectionConfig struct {
+	LLMDefault string   `yaml:"llm_default,omitempty"`
+	LLMAllowed []string `yaml:"llm_allowed,omitempty"`
+	MCPEnabled []string `yaml:"mcp_enabled,omitempty"`
+}
+
+type ProjectAgentConfig struct {
+	Skills ProjectSkillSelectionConfig `yaml:"skills,omitempty"`
+}
+
+type ProjectSkillSelectionConfig struct {
+	Enabled []string `yaml:"enabled,omitempty"`
 }
 
 type ProjectSource struct {
@@ -155,6 +225,7 @@ type MCPConfig struct {
 
 func DefaultConfig() Config {
 	return Config{
+		SchemaVersion: SchemaVersionV2,
 		Server: ServerConfig{
 			Host:     "127.0.0.1",
 			Port:     8420,
@@ -204,6 +275,12 @@ func DefaultConfig() Config {
 				MaxDiagnostics: 20,
 			},
 		},
+		LLMs: LLMRegistryConfig{
+			Providers: []LLMProviderConfig{},
+		},
+		MCPs: MCPRegistryConfig{
+			Servers: []MCPServerConfig{},
+		},
 	}
 }
 
@@ -214,6 +291,15 @@ func DefaultProjectConfig() ProjectConfig {
 		Routing: ProjectRoutingConfig{
 			Default:   RoutePreferenceAuto,
 			TaskTypes: map[string]string{},
+		},
+		Providers: ProjectProviderSelectionConfig{
+			LLMAllowed: []string{},
+			MCPEnabled: []string{},
+		},
+		Agent: ProjectAgentConfig{
+			Skills: ProjectSkillSelectionConfig{
+				Enabled: []string{},
+			},
 		},
 		Instructions: []string{},
 	}

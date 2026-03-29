@@ -23,7 +23,8 @@ This document is the issue-ready internal backlog for seeding a future `Sidekick
 | M04 - Local Model Helpers | **Done** | Ollama client, real embeddings, query rewriting, health/status verified |
 | M05 - Intent Classification and Policy | Not started | |
 | M06 - Security and Packaging Hardening | In progress | Parts 1-2 implemented; packaging artifacts/docs landed; real platform service validation remains |
-| M07 - Agent Runtime | Not started | Post-v1 evolution |
+| M07 - Agent Runtime | **Done** | Guarded agent-runtime substrate landed; follow-on command/config UX moved to M07.5 |
+| M07.5 - Command-Native Config and Capability Registry | Active | Next milestone: command tree, provider/MCP registries, endpoint-bound auth, managed markdown skills, migration |
 | OSS Readiness | Not started | Can run in parallel with M04+ |
 
 ## Milestones
@@ -261,11 +262,26 @@ Deferred packaging backlog after M06:
    - verify parity with foreground `rillan serve`
    - Dependencies: packaging artifacts and target OS validation environments
 
-### Milestone 07 - Agent Runtime (Post-v1)
+### ~~Milestone 07 - Agent Runtime (Post-v1)~~ ✓ MEANINGFULLY DONE
 
 Canonical plan: `.sisyphus/plans/rillan-milestone-07.md`
 
 The canonical plan now contains the implementation-level breakdown for each M07 phase, including likely file surfaces and verification targets.
+
+Current delivered substrate:
+
+- structured context packages and budget enforcement
+- shared runner with role profiles and `direct` vs `plan_first` orchestration
+- typed read-only skill registry for repo-local operations
+- proposal-gated effectful actions and approval lifecycle
+- read-only MCP snapshot support for environment awareness
+
+Follow-on work moved out of M07 and into M07.5:
+
+- command-native config UX
+- named LLM and MCP registries with endpoint-bound login/logout behavior
+- managed markdown-skill install/remove/list/show lifecycle
+- one-shot migration from the unreleased env/YAML-heavy operator model
 
 Execution shape in canonical plan:
 - Part 1 — build structured agent reasoning surfaces
@@ -318,6 +334,27 @@ Definition of done:
 - Agent handoffs use structured artifacts, not raw transcripts
 - MCP provides real-time environment context to the agent runtime
 - All agent actions are gated by user confirmation
+
+### Milestone 07.5 - Command-Native Config and Capability Registry
+
+Canonical plan: `.sisyphus/plans/rillan-milestone-07-5.md`
+
+Goal: make Rillan feel naturally operable through commands instead of starter YAML plus env-var choreography.
+
+Execution shape in canonical plan:
+
+- Part 1 — lock the command tree and storage contract
+- Part 2 — add endpoint-bound provider auth and managed skill lifecycle
+- Part 3 — migrate from the current unreleased behavior
+
+Milestone outcomes:
+
+- `auth` reserved for Rillan team/control-plane endpoints
+- `llm` and `mcp` each own `add/remove/list/use/login/logout`
+- `skill` owns markdown `install/remove/list/show`
+- `config` owns low-level `get/set/list/migrate`
+- schema-v2 separates config metadata, keyring-backed secrets, managed skill files, and runtime latency state
+- current unreleased setups can be migrated once into the new model without renumbering M08+
 
 ### OSS Readiness
 
@@ -373,9 +410,9 @@ Definition of done:
 
 The public repo roadmap should stay much simpler than Linear:
 
-- `Now`: intent classification, secret scanning, policy seam (M05)
-- `Next`: full tiered security, IP fragmentation, audit ledger, OS-native packaging (M06)
-- `Later`: agent runtime with orchestration and MCP integration (M07)
+- `Now`: command-native config, provider/MCP registries, endpoint-bound auth, managed skill installation, and unreleased migration (M07.5)
+- `Next`: finish remaining security-packaging validation from M06 while building on the new command/config contract
+- `Later`: broader agent-runtime expansion, richer MCP coverage, and deeper provider/capability work (M08+)
 
 ## Current Known Blockers
 

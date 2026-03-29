@@ -1,0 +1,292 @@
+package main
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/sidekickos/rillan/internal/config"
+	"github.com/sidekickos/rillan/internal/secretstore"
+	"github.com/spf13/cobra"
+)
+
+func newLLMCommand() *cobra.Command {
+	var configPath string
+
+	cmd := &cobra.Command{
+		Use:   "llm",
+		Short: "Manage named LLM providers and endpoint-bound auth",
+	}
+
+	cmd.PersistentFlags().StringVar(&configPath, "config", config.DefaultConfigPath(), "Path to the runtime config file")
+
+	cmd.AddCommand(newLLMAddCommand(&configPath))
+	cmd.AddCommand(newLLMRemoveCommand(&configPath))
+	cmd.AddCommand(newLLMListCommand(&configPath))
+	cmd.AddCommand(newLLMUseCommand(&configPath))
+	cmd.AddCommand(newLLMLoginCommand(&configPath))
+	cmd.AddCommand(newLLMLogoutCommand(&configPath))
+
+	return cmd
+}
+
+func newLLMAddCommand(configPath *string) *cobra.Command {
+	var providerType string
+	var endpoint string
+	var authStrategy string
+	var defaultModel string
+	var capabilities []string
+
+	cmd := &cobra.Command{
+		Use:   "add <name>",
+		Short: "Add a named LLM provider entry",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			entry := config.LLMProviderConfig{
+				ID:            strings.TrimSpace(args[0]),
+				Type:          normalizeProviderType(providerType),
+				Endpoint:      strings.TrimSpace(endpoint),
+				AuthStrategy:  normalizeAuthStrategy(authStrategy, providerType),
+				DefaultModel:  strings.TrimSpace(defaultModel),
+				Capabilities:  normalizeCapabilities(capabilities),
+				CredentialRef: credentialRefForLLM(args[0]),
+			}
+			if err := validateLLMProviderEntry(entry); err != nil {
+				return err
+			}
+
+			cfg, err := config.LoadForEdit(*configPath)
+			if err != nil {
+				return err
+			}
+			for _, existing := range cfg.LLMs.Providers {
+				if existing.ID == entry.ID {
+					return fmt.Errorf("llm provider %q already exists", entry.ID)
+				}
+			}
+			cfg.LLMs.Providers = append(cfg.LLMs.Providers, entry)
+			if cfg.LLMs.Default == "" {
+				cfg.LLMs.Default = entry.ID
+			}
+			return config.Write(*configPath, cfg)
+		},
+	}
+
+	cmd.Flags().StringVar(&providerType, "type", "", "Provider type (openai, openai_compatible, anthropic, kimi, local)")
+	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Provider endpoint URL")
+	cmd.Flags().StringVar(&authStrategy, "auth-strategy", "", "Auth strategy (none, api_key, browser_oidc, device_oidc)")
+	cmd.Flags().StringVar(&defaultModel, "default-model", "", "Default model name for this provider")
+	cmd.Flags().StringSliceVar(&capabilities, "capability", nil, "Capability exposed by this provider (repeatable)")
+
+	return cmd
+}
+
+func newLLMRemoveCommand(configPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove <name>",
+		Short: "Remove a named LLM provider entry",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := strings.TrimSpace(args[0])
+			cfg, err := config.LoadForEdit(*configPath)
+			if err != nil {
+				return err
+			}
+
+			providers := make([]config.LLMProviderConfig, 0, len(cfg.LLMs.Providers))
+			removed := false
+			for _, provider := range cfg.LLMs.Providers {
+				if provider.ID == id {
+					removed = true
+					continue
+				}
+				providers = append(providers, provider)
+			}
+			if !removed {
+				return fmt.Errorf("llm provider %q not found", id)
+			}
+			cfg.LLMs.Providers = providers
+			if cfg.LLMs.Default == id {
+				cfg.LLMs.Default = ""
+			}
+			return config.Write(*configPath, cfg)
+		},
+	}
+}
+
+func newLLMListCommand(configPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List configured LLM provider entries",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadForEdit(*configPath)
+			if err != nil {
+				return err
+			}
+			providers := append([]config.LLMProviderConfig(nil), cfg.LLMs.Providers...)
+			sort.Slice(providers, func(i, j int) bool { return providers[i].ID < providers[j].ID })
+
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "default: %s\n", cfg.LLMs.Default)
+			for _, provider := range providers {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "- id: %s\n  type: %s\n  endpoint: %s\n  auth_strategy: %s\n  default_model: %s\n", provider.ID, provider.Type, provider.Endpoint, provider.AuthStrategy, provider.DefaultModel)
+				if len(provider.Capabilities) > 0 {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  capabilities: %s\n", strings.Join(provider.Capabilities, ","))
+				}
+			}
+			return nil
+		},
+	}
+}
+
+func newLLMUseCommand(configPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "use <name>",
+		Short: "Select the default LLM provider entry",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := strings.TrimSpace(args[0])
+			cfg, err := config.LoadForEdit(*configPath)
+			if err != nil {
+				return err
+			}
+			for _, provider := range cfg.LLMs.Providers {
+				if provider.ID == id {
+					cfg.LLMs.Default = id
+					return config.Write(*configPath, cfg)
+				}
+			}
+			return fmt.Errorf("llm provider %q not found", id)
+		},
+	}
+}
+
+func newLLMLoginCommand(configPath *string) *cobra.Command {
+	var input credentialInput
+	cmd := &cobra.Command{
+		Use:   "login <name>",
+		Short: "Authenticate an LLM provider entry",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadForEdit(*configPath)
+			if err != nil {
+				return err
+			}
+			provider, err := findLLMProvider(cfg, args[0])
+			if err != nil {
+				return err
+			}
+			credential, err := credentialFromInput(provider.AuthStrategy, provider.Endpoint, input)
+			if err != nil {
+				return err
+			}
+			if err := secretstore.Save(provider.CredentialRef, credential); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "authenticated llm provider %s\n", provider.ID)
+			return nil
+		},
+	}
+	addCredentialFlags(cmd, &input)
+	return cmd
+}
+
+func newLLMLogoutCommand(configPath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "logout <name>",
+		Short: "Clear authentication for an LLM provider entry",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadForEdit(*configPath)
+			if err != nil {
+				return err
+			}
+			provider, err := findLLMProvider(cfg, args[0])
+			if err != nil {
+				return err
+			}
+			if err := secretstore.Delete(provider.CredentialRef); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "cleared llm provider auth for %s\n", provider.ID)
+			return nil
+		},
+	}
+}
+
+func credentialRefForLLM(id string) string {
+	return fmt.Sprintf("keyring://rillan/llm/%s", strings.TrimSpace(id))
+}
+
+func normalizeProviderType(providerType string) string {
+	return strings.ToLower(strings.TrimSpace(providerType))
+}
+
+func normalizeAuthStrategy(authStrategy string, providerType string) string {
+	authStrategy = strings.ToLower(strings.TrimSpace(authStrategy))
+	if authStrategy != "" {
+		return authStrategy
+	}
+	switch normalizeProviderType(providerType) {
+	case config.ProviderOpenAI:
+		return config.AuthStrategyBrowserOIDC
+	case config.ProviderLocal, config.ProviderAnthropic, config.ProviderKimi, config.ProviderOpenAICompatible:
+		return config.AuthStrategyAPIKey
+	default:
+		return ""
+	}
+}
+
+func normalizeCapabilities(capabilities []string) []string {
+	if len(capabilities) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(capabilities))
+	result := make([]string, 0, len(capabilities))
+	for _, capability := range capabilities {
+		normalized := strings.ToLower(strings.TrimSpace(capability))
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		result = append(result, normalized)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func validateLLMProviderEntry(entry config.LLMProviderConfig) error {
+	if entry.ID == "" {
+		return fmt.Errorf("llm provider name must not be empty")
+	}
+	if entry.Endpoint == "" {
+		return fmt.Errorf("llm provider endpoint must not be empty")
+	}
+	if entry.Type == "" {
+		return fmt.Errorf("llm provider type must not be empty")
+	}
+	switch entry.Type {
+	case config.ProviderOpenAI, config.ProviderOpenAICompatible, config.ProviderAnthropic, config.ProviderKimi, config.ProviderLocal:
+	default:
+		return fmt.Errorf("unsupported llm provider type %q", entry.Type)
+	}
+	switch entry.AuthStrategy {
+	case config.AuthStrategyNone, config.AuthStrategyAPIKey, config.AuthStrategyBrowserOIDC, config.AuthStrategyDeviceOIDC:
+	default:
+		return fmt.Errorf("unsupported llm auth strategy %q", entry.AuthStrategy)
+	}
+	return nil
+}
+
+func findLLMProvider(cfg config.Config, id string) (config.LLMProviderConfig, error) {
+	id = strings.TrimSpace(id)
+	for _, provider := range cfg.LLMs.Providers {
+		if provider.ID == id {
+			return provider, nil
+		}
+	}
+	return config.LLMProviderConfig{}, fmt.Errorf("llm provider %q not found", id)
+}
