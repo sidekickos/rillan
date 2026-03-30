@@ -33,22 +33,45 @@ type RouterOptions struct {
 	ProviderHost       *providers.Host
 	RouteCatalog       routing.Catalog
 	RouteStatus        routing.StatusCatalog
+	RuntimeSnapshot    RuntimeSnapshotFunc
+	RefreshRuntime     func(context.Context) error
 }
 
 func NewRouter(logger *slog.Logger, provider providers.Provider, cfg config.Config, opts RouterOptions) http.Handler {
 	mux := http.NewServeMux()
 	gate := agent.NewApprovalGate(opts.AuditRecorder)
+	pipeline := retrieval.NewPipeline(cfg.Retrieval, index.DefaultDBPath(), opts.PipelineOpts...)
+	runtimeSnapshot := opts.RuntimeSnapshot
+	if runtimeSnapshot == nil {
+		snapshot := RuntimeSnapshot{
+			Provider:      provider,
+			ProviderHost:  opts.ProviderHost,
+			Pipeline:      pipeline,
+			ProjectConfig: opts.ProjectConfig,
+			SystemConfig:  opts.SystemConfig,
+			Classifier:    opts.Classifier,
+			RouteCatalog:  opts.RouteCatalog,
+			RouteStatus:   opts.RouteStatus,
+			ReadinessInfo: ReadinessInfo{
+				RetrievalMode:      opts.RetrievalMode,
+				SystemConfigLoaded: opts.SystemConfigLoaded,
+				AuditLedgerPath:    opts.AuditLedgerPath,
+				LocalModelRequired: opts.LocalModelRequired,
+			},
+			OllamaChecker: opts.OllamaChecker,
+		}
+		runtimeSnapshot = func() RuntimeSnapshot { return snapshot }
+	}
 	mux.HandleFunc("GET /healthz", HealthHandler)
-	mux.HandleFunc("GET /readyz", ReadyHandler(provider, opts.OllamaChecker, ReadinessInfo{
-		RetrievalMode:      opts.RetrievalMode,
-		SystemConfigLoaded: opts.SystemConfigLoaded,
-		AuditLedgerPath:    opts.AuditLedgerPath,
-		LocalModelRequired: opts.LocalModelRequired,
-	}))
+	mux.HandleFunc("GET /readyz", ReadyHandlerFromRuntime(runtimeSnapshot))
+	if opts.RefreshRuntime != nil {
+		mux.HandleFunc("POST "+AdminRuntimeRefreshPath, NewAdminReloadHandler(logger, opts.RefreshRuntime))
+	}
 	mux.Handle("/v1/agent/tasks", NewAgentTaskHandler(logger, gate))
 	mux.Handle("/v1/agent/proposals/", NewAgentProposalHandler(logger, gate))
 
 	handlerOpts := make([]ChatCompletionsHandlerOption, 0, 4)
+	handlerOpts = append(handlerOpts, WithRuntimeSnapshot(runtimeSnapshot))
 	if opts.ProjectConfig.Name != "" {
 		handlerOpts = append(handlerOpts, WithProjectConfig(opts.ProjectConfig))
 	}
@@ -77,7 +100,7 @@ func NewRouter(logger *slog.Logger, provider providers.Provider, cfg config.Conf
 		handlerOpts = append(handlerOpts, WithRouteStatus(opts.RouteStatus))
 	}
 
-	mux.Handle("/v1/chat/completions", NewChatCompletionsHandler(logger, provider, retrieval.NewPipeline(cfg.Retrieval, index.DefaultDBPath(), opts.PipelineOpts...), handlerOpts...))
+	mux.Handle("/v1/chat/completions", NewChatCompletionsHandler(logger, provider, pipeline, handlerOpts...))
 
 	return WrapWithMiddleware(logger, mux)
 }
