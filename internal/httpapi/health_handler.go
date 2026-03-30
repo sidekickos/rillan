@@ -17,6 +17,8 @@ type ReadinessInfo struct {
 	SystemConfigLoaded bool
 	AuditLedgerPath    string
 	LocalModelRequired bool
+	ModulesDiscovered  int
+	ModulesEnabled     int
 }
 
 func HealthHandler(w http.ResponseWriter, _ *http.Request) {
@@ -55,6 +57,8 @@ func serveReadyResponse(w http.ResponseWriter, r *http.Request, checker readines
 			"system_config_loaded": info.SystemConfigLoaded,
 			"audit_ledger_path":    info.AuditLedgerPath,
 			"local_model_required": info.LocalModelRequired,
+			"modules_discovered":   info.ModulesDiscovered,
+			"modules_enabled":      info.ModulesEnabled,
 		},
 	}
 	if ollamaChecker != nil {

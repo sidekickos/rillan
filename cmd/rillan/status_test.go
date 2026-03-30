@@ -165,6 +165,39 @@ func TestStatusCommandReportsInvalidSystemConfigWithoutKeyringMaterial(t *testin
 	}
 }
 
+func TestStatusCommandReportsDiscoveredAndEnabledModules(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", filepath.Join(t.TempDir(), "data"))
+
+	projectRoot := t.TempDir()
+	configPath := writeStatusConfigWithRoot(t, projectRoot)
+	projectPath := filepath.Join(projectRoot, ".rillan", "project.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(projectPath, []byte("name: \"demo\"\nmodules:\n  enabled: [demo]\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	writeModuleManifest(t, filepath.Join(projectRoot, ".rillan", "modules", "demo", "module.yaml"), "id: \"demo\"\nversion: \"0.1.0\"\nentrypoint: [\"./bin/module\"]\n")
+	writeModuleManifest(t, filepath.Join(projectRoot, ".rillan", "modules", "other", "module.yaml"), "id: \"other\"\nversion: \"0.1.0\"\nentrypoint: [\"./bin/module\"]\n")
+
+	cmd := newStatusCommand()
+	cmd.SetArgs([]string{"--config", configPath})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stdout)
+
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("ExecuteContext returned error: %v", err)
+	}
+
+	output := stdout.String()
+	for _, want := range []string{"modules_discovered: 2", "modules_enabled: 1", "module_ids: demo"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output missing %q:\n%s", want, output)
+		}
+	}
+}
+
 func writeStatusTestConfig(t *testing.T) string {
 	t.Helper()
 
@@ -218,4 +251,37 @@ runtime:
 	}
 
 	return path
+}
+
+func writeStatusConfigWithRoot(t *testing.T, root string) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `server:
+  host: "127.0.0.1"
+  port: 8420
+  log_level: "info"
+
+index:
+  root: "` + root + `"
+
+runtime:
+  vector_store_mode: "embedded"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	return path
+}
+
+func writeModuleManifest(t *testing.T, path string, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
 }

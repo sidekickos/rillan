@@ -664,7 +664,7 @@ func TestLoadProjectAppliesDefaultsAndResolvesRelativeSourcePaths(t *testing.T) 
 	}
 }
 
-func TestLoadProjectInitializesProviderAndSkillSelections(t *testing.T) {
+func TestLoadProjectInitializesProviderSkillAndModuleSelections(t *testing.T) {
 	projectDir := t.TempDir()
 	projectPath := filepath.Join(projectDir, ".rillan", "project.yaml")
 	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
@@ -684,6 +684,9 @@ func TestLoadProjectInitializesProviderAndSkillSelections(t *testing.T) {
 	}
 	if cfg.Providers.MCPEnabled == nil {
 		t.Fatal("expected providers.mcp_enabled to be initialized")
+	}
+	if cfg.Modules.Enabled == nil {
+		t.Fatal("expected modules.enabled to be initialized")
 	}
 	if cfg.Agent.Skills.Enabled == nil {
 		t.Fatal("expected agent.skills.enabled to be initialized")

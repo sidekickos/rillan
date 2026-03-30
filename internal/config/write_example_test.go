@@ -58,6 +58,9 @@ func TestWriteExampleProjectConfigWritesStarterProjectConfig(t *testing.T) {
 	if !strings.Contains(content, "routing:") {
 		t.Fatalf("starter project config missing routing block: %s", content)
 	}
+	if !strings.Contains(content, "modules:") {
+		t.Fatalf("starter project config missing modules block: %s", content)
+	}
 	for _, forbidden := range []string{"encrypted_payload", "keyring_service", "system:"} {
 		if strings.Contains(content, forbidden) {
 			t.Fatalf("starter project config leaked system-only field %q: %s", forbidden, content)

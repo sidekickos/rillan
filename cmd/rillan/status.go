@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/sidekickos/rillan/internal/audit"
 	"github.com/sidekickos/rillan/internal/config"
 	"github.com/sidekickos/rillan/internal/index"
+	"github.com/sidekickos/rillan/internal/modules"
 	"github.com/sidekickos/rillan/internal/ollama"
 	"github.com/spf13/cobra"
 )
@@ -22,6 +24,20 @@ func newStatusCommand() *cobra.Command {
 		Short: "Show local index status",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.LoadWithMode(configPath, config.ValidationModeStatus)
+			if err != nil {
+				return err
+			}
+
+			projectConfigPath := config.ResolveProjectConfigPath(cfg.Index.Root)
+			projectCfg, err := loadStatusProjectConfig(projectConfigPath)
+			if err != nil {
+				return err
+			}
+			discoveredModules, err := modules.LoadProjectCatalog(projectConfigPath)
+			if err != nil {
+				return err
+			}
+			enabledModules, err := modules.FilterEnabled(discoveredModules, projectCfg.Modules.Enabled)
 			if err != nil {
 				return err
 			}
@@ -45,7 +61,7 @@ func newStatusCommand() *cobra.Command {
 			}
 			auditLedgerPath := audit.DefaultLedgerPath()
 
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "configured_root: %s\nlast_attempt_state: %s\nlast_attempt_root: %s\nlast_attempt_at: %s\nlast_attempt_error: %s\ncommitted_root: %s\ncommitted_last_indexed_at: %s\ndocuments: %d\nchunks: %d\nvectors: %d\ndb_path: %s\nsystem_config_path: %s\nsystem_config_state: %s\naudit_ledger_path: %s\nretrieval_enabled: %t\nretrieval_mode: %s\n",
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "configured_root: %s\nlast_attempt_state: %s\nlast_attempt_root: %s\nlast_attempt_at: %s\nlast_attempt_error: %s\ncommitted_root: %s\ncommitted_last_indexed_at: %s\ndocuments: %d\nchunks: %d\nvectors: %d\ndb_path: %s\nsystem_config_path: %s\nsystem_config_state: %s\naudit_ledger_path: %s\nretrieval_enabled: %t\nretrieval_mode: %s\nmodules_discovered: %d\nmodules_enabled: %d\nmodule_ids: %s\n",
 				emptyFallback(status.ConfiguredRootPath, "not configured"),
 				emptyFallback(status.LastAttemptState, index.RunStatusNeverIndexed),
 				emptyFallback(status.LastAttemptRootPath, "none"),
@@ -62,6 +78,9 @@ func newStatusCommand() *cobra.Command {
 				auditLedgerPath,
 				cfg.Retrieval.Enabled,
 				retrievalMode,
+				len(discoveredModules.Modules),
+				len(enabledModules.Modules),
+				moduleIDs(enabledModules),
 			)
 			if err != nil {
 				return err
@@ -94,6 +113,17 @@ func newStatusCommand() *cobra.Command {
 	return cmd
 }
 
+func loadStatusProjectConfig(projectConfigPath string) (config.ProjectConfig, error) {
+	projectCfg, err := config.LoadProject(projectConfigPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return config.DefaultProjectConfig(), nil
+		}
+		return config.ProjectConfig{}, err
+	}
+	return projectCfg, nil
+}
+
 func formatStatusTime(value time.Time) string {
 	if value.IsZero() {
 		return "never"
@@ -106,4 +136,15 @@ func emptyFallback(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func moduleIDs(catalog modules.Catalog) string {
+	if len(catalog.Modules) == 0 {
+		return "none"
+	}
+	ids := make([]string, 0, len(catalog.Modules))
+	for _, module := range catalog.Modules {
+		ids = append(ids, module.ID)
+	}
+	return strings.Join(ids, ",")
 }

@@ -5,6 +5,7 @@ import (
 
 	"github.com/sidekickos/rillan/internal/classify"
 	"github.com/sidekickos/rillan/internal/config"
+	"github.com/sidekickos/rillan/internal/modules"
 	"github.com/sidekickos/rillan/internal/providers"
 	"github.com/sidekickos/rillan/internal/retrieval"
 	"github.com/sidekickos/rillan/internal/routing"
@@ -16,6 +17,7 @@ type RuntimeSnapshot struct {
 	Pipeline      *retrieval.Pipeline
 	ProjectConfig config.ProjectConfig
 	SystemConfig  *config.SystemConfig
+	Modules       modules.Catalog
 	Classifier    classify.Classifier
 	RouteCatalog  routing.Catalog
 	RouteStatus   routing.StatusCatalog

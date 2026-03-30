@@ -48,6 +48,12 @@ func ValidateProject(cfg ProjectConfig) error {
 		}
 	}
 
+	for i, moduleID := range cfg.Modules.Enabled {
+		if strings.TrimSpace(moduleID) == "" {
+			return fmt.Errorf("project.modules.enabled[%d] must not be empty", i)
+		}
+	}
+
 	return nil
 }
 

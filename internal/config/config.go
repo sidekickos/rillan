@@ -199,6 +199,7 @@ type ProjectConfig struct {
 	Sources        []ProjectSource                `yaml:"sources"`
 	Routing        ProjectRoutingConfig           `yaml:"routing"`
 	Providers      ProjectProviderSelectionConfig `yaml:"providers,omitempty"`
+	Modules        ProjectModuleSelectionConfig   `yaml:"modules,omitempty"`
 	Agent          ProjectAgentConfig             `yaml:"agent,omitempty"`
 	SystemPrompt   string                         `yaml:"system_prompt"`
 	Instructions   []string                       `yaml:"instructions"`
@@ -209,6 +210,10 @@ type ProjectProviderSelectionConfig struct {
 	LLMDefault string   `yaml:"llm_default,omitempty"`
 	LLMAllowed []string `yaml:"llm_allowed,omitempty"`
 	MCPEnabled []string `yaml:"mcp_enabled,omitempty"`
+}
+
+type ProjectModuleSelectionConfig struct {
+	Enabled []string `yaml:"enabled,omitempty"`
 }
 
 // ProjectAgentConfig stores repo-local agent selections.
@@ -467,6 +472,9 @@ func DefaultProjectConfig() ProjectConfig {
 		Providers: ProjectProviderSelectionConfig{
 			LLMAllowed: []string{},
 			MCPEnabled: []string{},
+		},
+		Modules: ProjectModuleSelectionConfig{
+			Enabled: []string{},
 		},
 		Agent: ProjectAgentConfig{
 			Skills: ProjectSkillSelectionConfig{

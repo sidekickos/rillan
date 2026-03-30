@@ -566,6 +566,9 @@ func applyProjectDerivedDefaults(cfg *ProjectConfig, projectPath string) {
 	if cfg.Providers.MCPEnabled == nil {
 		cfg.Providers.MCPEnabled = []string{}
 	}
+	if cfg.Modules.Enabled == nil {
+		cfg.Modules.Enabled = []string{}
+	}
 	if cfg.Agent.Skills.Enabled == nil {
 		cfg.Agent.Skills.Enabled = []string{}
 	}

@@ -102,6 +102,23 @@ func TestReadyHandlerReturnsServiceUnavailableWhenRequiredLocalModelIsUnavailabl
 	}
 }
 
+func TestReadyHandlerIncludesModuleCounts(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+
+	ReadyHandler(testChecker{}, nil, ReadinessInfo{ModulesDiscovered: 3, ModulesEnabled: 1})(recorder, request)
+
+	if got, want := recorder.Code, http.StatusOK; got != want {
+		t.Fatalf("status = %d, want %d", got, want)
+	}
+	body := recorder.Body.String()
+	for _, want := range []string{"modules_discovered", "modules_enabled", "3", "1"} {
+		if !contains(body, want) {
+			t.Fatalf("expected %q in response, got %s", want, body)
+		}
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstring(s, substr))
 }

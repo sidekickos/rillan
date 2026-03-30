@@ -92,6 +92,9 @@ providers:
   llm_allowed: ["openai"]
   mcp_enabled: []
 
+modules:
+  enabled: []
+
 agent:
   skills:
     enabled: []

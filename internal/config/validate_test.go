@@ -219,11 +219,22 @@ func TestValidateProjectAcceptsValidConfig(t *testing.T) {
 	cfg.Sources = []ProjectSource{{Path: "/repo/src", Type: "go"}}
 	cfg.Routing.Default = RoutePreferencePreferCloud
 	cfg.Routing.TaskTypes["code_generation"] = RoutePreferencePreferLocal
+	cfg.Modules.Enabled = []string{"demo-module"}
 	cfg.SystemPrompt = "Keep responses grounded in the repo."
 	cfg.Instructions = []string{"Never include credentials.", "Prefer retrieval before generation."}
 
 	if err := ValidateProject(cfg); err != nil {
 		t.Fatalf("ValidateProject returned error: %v", err)
+	}
+}
+
+func TestValidateProjectRejectsEmptyEnabledModuleID(t *testing.T) {
+	cfg := DefaultProjectConfig()
+	cfg.Name = "demo"
+	cfg.Modules.Enabled = []string{"demo", "   "}
+
+	if err := ValidateProject(cfg); err == nil {
+		t.Fatal("expected empty module id to fail validation")
 	}
 }
 

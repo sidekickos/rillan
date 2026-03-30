@@ -10,6 +10,7 @@ import (
 	"github.com/sidekickos/rillan/internal/config"
 	"github.com/sidekickos/rillan/internal/httpapi"
 	"github.com/sidekickos/rillan/internal/index"
+	"github.com/sidekickos/rillan/internal/modules"
 	"github.com/sidekickos/rillan/internal/ollama"
 	"github.com/sidekickos/rillan/internal/providers"
 	"github.com/sidekickos/rillan/internal/retrieval"
@@ -23,7 +24,7 @@ type runtimeSnapshotBuilder struct {
 }
 
 func (b runtimeSnapshotBuilder) buildFromLoaded(ctx context.Context, cfg config.Config, project config.ProjectConfig, system *config.SystemConfig, projectConfigPath string) (*runtimeState, error) {
-	snapshot, err := buildRuntimeSnapshot(ctx, cfg, project, system, b.auditLedgerPath)
+	snapshot, err := buildRuntimeSnapshot(ctx, cfg, project, system, b.auditLedgerPath, projectConfigPath)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +64,16 @@ func (b runtimeSnapshotBuilder) buildFromDisk(ctx context.Context) (*runtimeStat
 	return b.buildFromLoaded(ctx, cfg, projectCfg, systemCfg, projectConfigPath)
 }
 
-func buildRuntimeSnapshot(ctx context.Context, cfg config.Config, project config.ProjectConfig, system *config.SystemConfig, auditLedgerPath string) (httpapi.RuntimeSnapshot, error) {
+func buildRuntimeSnapshot(ctx context.Context, cfg config.Config, project config.ProjectConfig, system *config.SystemConfig, auditLedgerPath string, projectConfigPath string) (httpapi.RuntimeSnapshot, error) {
+	discoveredModules, err := modules.LoadProjectCatalog(projectConfigPath)
+	if err != nil {
+		return httpapi.RuntimeSnapshot{}, err
+	}
+	moduleCatalog, err := modules.FilterEnabled(discoveredModules, project.Modules.Enabled)
+	if err != nil {
+		return httpapi.RuntimeSnapshot{}, err
+	}
+
 	providerHostCfg, err := config.ResolveRuntimeProviderHostConfig(cfg, project)
 	if err != nil {
 		return httpapi.RuntimeSnapshot{}, err
@@ -86,6 +96,7 @@ func buildRuntimeSnapshot(ctx context.Context, cfg config.Config, project config
 		ProviderHost:  providerHost,
 		ProjectConfig: project,
 		SystemConfig:  system,
+		Modules:       moduleCatalog,
 		RouteCatalog:  routeCatalog,
 		RouteStatus: routing.BuildStatusCatalog(ctx, routing.StatusInput{
 			Catalog:    routeCatalog,
@@ -97,6 +108,8 @@ func buildRuntimeSnapshot(ctx context.Context, cfg config.Config, project config
 			SystemConfigLoaded: system != nil,
 			AuditLedgerPath:    auditLedgerPath,
 			LocalModelRequired: cfg.LocalModel.Enabled,
+			ModulesDiscovered:  len(discoveredModules.Modules),
+			ModulesEnabled:     len(moduleCatalog.Modules),
 		},
 	}
 	if cfg.Retrieval.Enabled {
