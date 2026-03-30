@@ -221,9 +221,21 @@ A typical chat completion request flows through:
    a. **Retrieval Pipeline** embeds the query, optionally rewrites it
    b. **Index Store** performs vector similarity search
    c. Retrieved context is injected into the messages
-5. **Provider host** resolves the selected family/preset entry and forwards the request to the upstream API or internal Ollama path
-6. **Response** is returned to the client
-7. **Audit** records the request/response metadata
+5. **Routing** builds the candidate set, filters it by policy + availability, and selects the winning provider
+6. **Provider host** resolves the selected family/preset entry and forwards the request to the upstream API or internal Ollama path
+7. **Response** is returned to the client
+8. **Audit** records the request/response metadata
+
+Current route choice is deterministic and explainable:
+
+1. policy eligibility
+2. exact requested-model match (when any candidate advertises it)
+3. required capability gating (`tool_calling`, `multimodal`)
+4. route preference fit
+5. task-strength fit
+6. stable tie-break by provider ID
+
+The router now prefers exact matches from `candidate.model_pins`, falling back to `default_model` only when explicit pins are absent.
 
 ## Configuration Flow
 
@@ -244,8 +256,15 @@ rillan llm login <name> --api-key "sk-..."
 rillan serve
   └─> LoadConfig()
   └─> ResolveRuntimeProviderHostConfig()
-  └─> providers.NewHost() and host.DefaultProvider()
+  └─> providers.NewHost()
   └─> app.Run() starts HTTP server
+
+request hits /v1/chat/completions
+  └─> classify request (if classifier configured)
+  └─> preflight policy evaluation
+  └─> routing.BuildCatalog() + routing.BuildStatusCatalog()
+  └─> routing.Decide() selects a provider and records a route trace
+  └─> selected provider handles dispatch
 ```
 
 ## Key Design Decisions

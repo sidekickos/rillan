@@ -246,6 +246,31 @@ instructions:
 
 Classification affects policy enforcement. For example, `trade_secret` projects can be forced to local-only routing by system policy.
 
+The current runtime also applies deterministic routing on each chat request:
+
+- `task_types` overrides beat `routing.default`
+- an exact `request.model` match is preferred when a configured candidate advertises that default model
+- explicit `model_pins` take precedence over `default_model` for exact requested-model affinity
+- requests with `tools` / active `tool_choice` require candidates that advertise `tool_calling`
+- requests with non-text content parts require candidates that advertise `multimodal`
+- local-only policy verdicts exclude remote candidates
+- configured-but-unauthenticated or not-ready candidates are excluded before selection
+- if multiple candidates are still equal, provider ID is used as the stable tie-break
+
+If no configured candidate exactly matches the requested model, routing falls back to the normal preference + capability order instead of failing immediately.
+
+Example provider entry with explicit model pins:
+
+```yaml
+llms:
+  providers:
+    - id: "claude-prod"
+      preset: "anthropic"
+      default_model: "claude-sonnet-4-5"
+      model_pins: ["claude-sonnet-4-5", "claude-sonnet-latest"]
+      capabilities: ["chat", "reasoning", "tool_calling"]
+```
+
 ## Configuration Inspection
 
 The `config` command group provides low-level access to the runtime config. It is not the primary onboarding flow -- use `llm`, `mcp`, and `skill` commands for day-to-day setup.
@@ -277,6 +302,12 @@ M08 moves provider execution behind a host-backed runtime seam:
 - bundled presets map named providers onto shared adapter families
 - Anthropic remains its own translated family
 - Ollama remains internal/core but now participates in the same high-level selection story
+
+M09 builds on that with a routing layer:
+
+- a candidate catalog derived from configured provider entries
+- candidate status facts (`configured`, `auth-valid`, `ready`, `available`)
+- a route decision trace containing selected and rejected candidates
 
 ## Notes on Secrets
 

@@ -11,6 +11,7 @@ Rillan is a local OpenAI-compatible proxy daemon written in Go. It sits between 
 - **Local indexing** -- chunk and embed your codebase into SQLite for semantic retrieval
 - **Markdown skills** -- install reusable instruction sets that shape agent behavior
 - **Project-level config** -- per-repo classification, provider restrictions, and routing rules
+- **Deterministic routing** -- per-request provider choice based on project routing preferences, policy verdicts, and available candidates
 - **Policy enforcement** -- system-level rules for PII masking, credential stripping, and routing constraints
 - **Optional local models** -- Ollama integration for embeddings and query rewriting without leaving your machine
 
@@ -118,6 +119,16 @@ Current bundled runtime families:
 - native `anthropic/http`
 - internal `ollama`
 
+Current routing behavior:
+
+- route preferences come from `project.routing.default` and `project.routing.task_types`
+- an exact `request.model` match outranks normal routing when a known candidate advertises that model
+- explicit provider `model_pins` are used for exact model affinity before falling back to `default_model`
+- requests that need `tool_calling` or `multimodal` capabilities exclude candidates that do not advertise them
+- policy verdicts can force local-only handling before provider selection
+- candidate availability considers configuration, auth validity, and provider readiness
+- tie-breaks stay deterministic by provider ID when candidates are otherwise equal
+
 ### MCP endpoint management
 
 | Command | Description |
@@ -182,7 +193,7 @@ Current bundled runtime families:
 |--------|------|-------------|
 | `GET` | `/healthz` | Liveness probe -- always returns `200` |
 | `GET` | `/readyz` | Readiness probe -- returns `200` when the daemon is ready to serve |
-| `POST` | `/v1/chat/completions` | OpenAI-compatible chat completion passthrough |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible ingress with routed provider dispatch |
 | `GET` | `/v1/agent/tasks` | Agent task listing |
 | `GET/POST` | `/v1/agent/proposals/` | Agent proposal submission and retrieval |
 
@@ -220,6 +231,8 @@ Key sections:
 | `agent` | Agent and MCP runtime toggles |
 | `runtime` | Vector store mode and local model base URL |
 
+Provider entries can also declare `model_pins` to tell the router which exact model names should prefer that entry.
+
 ### Project config (repo-local)
 
 Place a `project.yaml` in your repo's `.rillan/` directory to control per-project behavior:
@@ -240,6 +253,13 @@ agent:
 instructions:
   - "Keep outbound context tightly bounded to the current task."
 ```
+
+Current routing inputs are:
+
+- project routing preferences
+- classifier action type when available
+- policy verdicts, including local-only enforcement
+- candidate catalog + status (`configured`, `auth-valid`, `ready`)
 
 ### System config (machine-local)
 
