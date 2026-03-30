@@ -65,6 +65,38 @@ func TestValidateChatCompletionRequestAcceptsAssistantToolCallEnvelope(t *testin
 	}
 }
 
+func TestRequiredCapabilitiesDetectsTools(t *testing.T) {
+	var req ChatCompletionRequest
+	if err := json.Unmarshal([]byte(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":"auto"}`), &req); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+	got := RequiredCapabilities(req)
+	if len(got) != 1 || got[0] != "tool_calling" {
+		t.Fatalf("required capabilities = %#v, want [tool_calling]", got)
+	}
+}
+
+func TestRequiredCapabilitiesDetectsMultimodalNonTextParts(t *testing.T) {
+	var req ChatCompletionRequest
+	if err := json.Unmarshal([]byte(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":[{"type":"text","text":"look"},{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]}]}`), &req); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+	got := RequiredCapabilities(req)
+	if len(got) != 1 || got[0] != "multimodal" {
+		t.Fatalf("required capabilities = %#v, want [multimodal]", got)
+	}
+}
+
+func TestRequiredCapabilitiesIgnoresTextOnlyStructuredContent(t *testing.T) {
+	var req ChatCompletionRequest
+	if err := json.Unmarshal([]byte(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":[{"type":"text","text":"ping"}]}]}`), &req); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+	if got := RequiredCapabilities(req); len(got) != 0 {
+		t.Fatalf("required capabilities = %#v, want none", got)
+	}
+}
+
 func TestValidateChatCompletionRequestRejectsInvalidRetrievalOverride(t *testing.T) {
 	zero := 0
 	req := ChatCompletionRequest{
