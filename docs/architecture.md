@@ -17,8 +17,8 @@ This document describes Rillan's internal structure, package responsibilities, a
                │      │      │
     ┌──────────▼──┐ ┌─▼────┐ ├──────────────┐
     │ httpapi     │ │config│ │ providers     │
-    │ (router,    │ │(load,│ │ (openai,      │
-    │  handlers)  │ │ write)│ │  anthropic*)  │
+    │ (router,    │ │(load,│ │ (host +       │
+    │  handlers)  │ │ write)│ │  families)    │
     └──────┬──────┘ └──────┘ └──────┬───────┘
            │                        │
     ┌──────▼──────┐          ┌──────▼───────┐
@@ -35,7 +35,7 @@ This document describes Rillan's internal structure, package responsibilities, a
     └─────────────┘
 ```
 
-*Anthropic provider is declared but not implemented.
+Provider execution is host-backed: bundled presets resolve to provider families instead of every upstream becoming a separate kernel path.
 
 ## Package Map
 
@@ -87,23 +87,37 @@ Config loading order: YAML file -> environment variable overrides -> per-request
 | Health handlers | `/healthz` and `/readyz` |
 | Middleware | Request logging, request ID injection, context management |
 
-### `internal/providers/` -- Provider abstraction
+### `internal/providers/` -- Provider abstraction and host
 
-Defines the `Provider` interface:
+Defines the `Provider` interface and the host that instantiates the selected family:
 
 ```go
 type Provider interface {
     Name() string
-    Ready() bool
-    ChatCompletions(ctx context.Context, req openai.ChatCompletionRequest) (*openai.ChatCompletionResponse, error)
+    Ready(context.Context) error
+    ChatCompletions(context.Context, openai.ChatCompletionRequest, []byte) (*http.Response, error)
 }
 ```
 
-`New()` factory function selects the provider implementation based on config. Currently only `internal/providers/openai` is implemented.
+Current runtime families:
 
-### `internal/providers/openai/` -- OpenAI-compatible client
+- `openai_compatible/http` — shared by OpenAI, xAI, DeepSeek, Kimi, and z.ai
+- `anthropic/http` — native Anthropic translation
+- `ollama/internal` — internal Ollama-backed family
 
-HTTP client that translates Rillan's internal request types to OpenAI API calls. Handles request construction, response parsing, and error mapping.
+`internal/providers/host.go` is the seam that instantiates the default provider from runtime host config.
+
+### `internal/providers/openai/` -- Shared OpenAI-compatible family
+
+HTTP client used by the shared OpenAI-compatible family. OpenAI, xAI, DeepSeek, Kimi, and z.ai currently ride this family through preset-specific defaults.
+
+### `internal/providers/anthropic/` -- Anthropic-native family
+
+Dedicated Anthropic adapter that translates the OpenAI-style ingress request into Anthropic's `/v1/messages` shape and applies documented `x-api-key` auth.
+
+### `internal/providers/ollama/` -- Internal Ollama family
+
+Internal provider adapter that wraps the native Ollama client and returns an OpenAI-shaped chat completion response so the rest of the runtime can stay consistent.
 
 ### `internal/index/` -- Local corpus indexing
 
@@ -148,16 +162,17 @@ Test hooks (`SetKeyringGetForTest`, etc.) allow tests to run without a real keyr
 |-----------|---------------|
 | `SkillCatalog` | Manages installed markdown skills (install, remove, list, metadata) |
 | `SkillMetrics` | Per-skill latency tracking (invocation count, average/last latency) |
+| `ToolRuntime` | Read-only `ToolSource` / `ToolExecutor` seam over passive markdown skills and bounded built-in tools |
 | `ApprovalGate` | Gating mechanism for agent actions requiring approval |
 | `ContextBuilder` | Builds execution context for agent runs |
 | `Runner` | Agent execution control |
 | `Orchestrator` | High-level agent orchestration |
 | `MCPSnapshot*` | MCP tool and resource snapshot management |
 
-Skills are stored as:
+Skills and tool runtime state are stored as:
 - **Manifest:** `<data_dir>/skills/catalog.json` -- metadata for all installed skills
 - **Markdown:** `<data_dir>/skills/<id>.md` -- the actual skill content
-- **Metrics:** `<data_dir>/skills/metrics.json` -- per-skill performance data
+- **Metrics:** `<data_dir>/agent/skill_metrics.json` -- per-skill performance data
 
 ### `internal/ollama/` -- Local model integration
 
@@ -206,7 +221,7 @@ A typical chat completion request flows through:
    a. **Retrieval Pipeline** embeds the query, optionally rewrites it
    b. **Index Store** performs vector similarity search
    c. Retrieved context is injected into the messages
-5. **Provider** (selected from the LLM registry) forwards the request to the upstream API
+5. **Provider host** resolves the selected family/preset entry and forwards the request to the upstream API or internal Ollama path
 6. **Response** is returned to the client
 7. **Audit** records the request/response metadata
 
@@ -217,7 +232,7 @@ rillan init
   └─> WriteExampleConfig()  (internal/config/write_example.go)
         └─> writes config.yaml with DefaultConfig() values
 
-rillan llm add <name> --backend openai_compatible --transport http ...
+rillan llm add <name> --preset openai ...
   └─> LoadConfig()           (internal/config/load.go)
   └─> append to LLMs.Providers
   └─> write config back to disk
@@ -228,8 +243,8 @@ rillan llm login <name> --api-key "sk-..."
 
 rillan serve
   └─> LoadConfig()
-  └─> ResolveBearer() for default provider credential
-  └─> providers.New() with resolved API key
+  └─> ResolveRuntimeProviderHostConfig()
+  └─> providers.NewHost() and host.DefaultProvider()
   └─> app.Run() starts HTTP server
 ```
 

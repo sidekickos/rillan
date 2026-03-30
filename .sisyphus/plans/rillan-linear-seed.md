@@ -24,7 +24,9 @@ This document is the issue-ready internal backlog for seeding a future `Sidekick
 | M05 - Intent Classification and Policy | Not started | |
 | M06 - Security and Packaging Hardening | In progress | Parts 1-2 implemented; packaging artifacts/docs landed; real platform service validation remains |
 | M07 - Agent Runtime | **Done** | Guarded agent-runtime substrate landed; follow-on command/config UX moved to M07.5 |
-| M07.5 - Command-Native Config and Capability Registry | Active | Next milestone: command tree, provider/MCP registries, endpoint-bound auth, managed markdown skills, migration |
+| M07.5 - Command-Native Config and Capability Registry | **Done** | Command-native config/auth/skill substrate landed; ADR-004 seams added |
+| M08 - Adapter Host and Bundled First-Party Providers | **Done** | Adapter host, bundled provider families, internal Ollama family, guarded read-only tool loop landed |
+| M09 - Deterministic Routing Intelligence | Planned | Model catalog, candidate status, explainable per-request routing |
 | OSS Readiness | Not started | Can run in parallel with M04+ |
 
 ## Milestones
@@ -406,13 +408,82 @@ Definition of done:
 - The repo can be published publicly without obvious governance or release-process gaps
 - Contributors can understand how to participate safely and correctly
 
+### ~~Milestone 07.5 - Command-Native Config and Capability Registry~~ ✓ DONE
+
+Canonical plan: `.sisyphus/plans/rillan-milestone-07-5.md`
+
+Delivered:
+
+- command-native `auth`, `llm`, `mcp`, `skill`, and `config` nouns
+- schema-v2 config and repo-local provider/skill selection
+- keyring-backed credential refs
+- managed markdown skills and latency state
+- ADR-004-aligned backend/transport provider seams and passive skill injection
+
+### ~~Milestone 08 - Adapter Host and Bundled First-Party Providers~~ ✓ DONE
+
+Canonical plan: `.sisyphus/plans/rillan-milestone-08.md`
+
+Goal: replace the remaining built-in provider execution trap with an adapter host and ship the first-party provider bundle.
+
+Delivered:
+
+- provider host and contract-tested bundled families
+- OpenAI/xAI/DeepSeek/Kimi/z.ai on one shared OpenAI-compatible family
+- Anthropic native family
+- Ollama internal family aligned with host-backed provider selection
+- raw request-envelope preservation for structured/tool-call-ready payloads
+- guarded read-only tool seam over passive markdown skills and built-in bounded tools
+
+Planned execution shape:
+
+- Part 1 — define the adapter host contract
+- Part 2 — ship bundled first-party provider families and presets
+- Part 3 — expand the guarded runtime with a read-only tool seam
+
+User-facing bundled set:
+
+- Ollama (internal/core)
+- OpenAI
+- Anthropic
+- xAI
+- DeepSeek
+- Kimi
+- z.ai
+
+Implementation notes:
+
+- OpenAI/xAI/DeepSeek/Kimi/z.ai cluster under one OpenAI-compatible family
+- Anthropic remains its own native family
+- Ollama remains internal and local-first
+- OpenCode is not treated as a normal provider family in M08
+
+### Milestone 09 - Deterministic Routing Intelligence
+
+Canonical plan: `.sisyphus/plans/rillan-milestone-09.md`
+
+Goal: determine what each configured model is good at, what is available now, and where each request should go.
+
+Planned execution shape:
+
+- Part 1 — define routing artifacts and invariants
+- Part 2 — implement candidate status and deterministic route selection
+- Part 3 — integrate route decisions into request flow and audit traces
+
+Milestone outcomes:
+
+- static model descriptor catalog
+- live candidate status table
+- explainable route decision trace
+- policy-first deterministic routing over bundled and installed providers
+
 ## Public Roadmap Translation
 
 The public repo roadmap should stay much simpler than Linear:
 
-- `Now`: command-native config, provider/MCP registries, endpoint-bound auth, managed skill installation, and unreleased migration (M07.5)
-- `Next`: finish remaining security-packaging validation from M06 while building on the new command/config contract
-- `Later`: broader agent-runtime expansion, richer MCP coverage, and deeper provider/capability work (M08+)
+- `Now`: deterministic routing intelligence over bundled and installed providers (M09)
+- `Next`: broader plugin surfaces, delegated gateways, and richer MCP execution
+- `Later`: OSS readiness and public release hardening
 
 ## Current Known Blockers
 

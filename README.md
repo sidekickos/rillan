@@ -5,7 +5,7 @@ Rillan is a local OpenAI-compatible proxy daemon written in Go. It sits between 
 ## Features
 
 - **OpenAI-compatible API** on `127.0.0.1:8420` -- drop-in replacement for local tools that speak the OpenAI protocol
-- **Named LLM providers** -- register multiple providers (OpenAI, Kimi, local models) and switch between them
+- **Named LLM providers** -- register bundled presets and custom provider entries across OpenAI-compatible, Anthropic, and internal Ollama families
 - **Named MCP endpoints** -- register Model Context Protocol servers for tool and resource access
 - **Secure credential storage** -- API keys and tokens live in your OS keyring, never in plaintext YAML
 - **Local indexing** -- chunk and embed your codebase into SQLite for semantic retrieval
@@ -43,9 +43,7 @@ This writes a starter `config.yaml` to your platform's config directory (see [Fi
 
 ```bash
 rillan llm add work-gpt \
-  --backend openai_compatible \
-  --transport http \
-  --endpoint https://api.openai.com/v1 \
+  --preset openai \
   --default-model gpt-4o
 
 rillan llm login work-gpt \
@@ -105,13 +103,20 @@ rillan status
 
 | Flag | Description |
 |------|-------------|
-| `--backend` | Provider backend identity (current runtime supports `openai_compatible`) |
+| `--preset` | Bundled preset: `openai`, `anthropic`, `xai`, `deepseek`, `kimi`, `zai` |
+| `--backend` | Provider backend identity for manual entries |
 | `--transport` | Provider transport: `http`, `stdio` |
 | `--endpoint` | Provider API base URL |
 | `--command` | Repeatable. Command vector for `stdio` transport |
 | `--auth-strategy` | Auth method: `none`, `api_key`, `browser_oidc`, `device_oidc` |
 | `--default-model` | Default model name for requests |
 | `--capability` | Repeatable. Capability tags (e.g., `chat`, `reasoning`, `tool_calling`) |
+
+Current bundled runtime families:
+
+- shared `openai_compatible/http` for OpenAI, xAI, DeepSeek, Kimi, and z.ai
+- native `anthropic/http`
+- internal `ollama`
 
 ### MCP endpoint management
 

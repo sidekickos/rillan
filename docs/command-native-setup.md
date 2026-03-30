@@ -23,9 +23,7 @@ rillan init
 
 # 2. Register your first LLM provider
 rillan llm add work-gpt \
-  --backend openai_compatible \
-  --transport http \
-  --endpoint https://api.openai.com/v1 \
+  --preset openai \
   --default-model gpt-4o \
   --capability chat \
   --capability reasoning \
@@ -45,15 +43,23 @@ rillan llm list
 
 ### Adding providers
 
-Each provider needs a unique name, a backend, and a transport:
+Each provider needs a unique name plus either a bundled preset or an explicit backend/transport pair:
 
 ```bash
-# OpenAI-compatible HTTP provider
+# Bundled OpenAI preset
 rillan llm add openai-prod \
-  --backend openai_compatible \
-  --transport http \
-  --endpoint https://api.openai.com/v1 \
+  --preset openai \
   --default-model gpt-4o
+
+# Bundled Anthropic preset
+rillan llm add claude-prod \
+  --preset anthropic \
+  --default-model claude-sonnet-4-5
+
+# Bundled DeepSeek preset
+rillan llm add deepseek-prod \
+  --preset deepseek \
+  --default-model deepseek-chat
 
 # Future stdio-backed extension entry
 rillan llm add repo-plugin \
@@ -63,7 +69,13 @@ rillan llm add repo-plugin \
   --auth-strategy none
 ```
 
-The current runtime executes built-in `openai_compatible` HTTP providers. `stdio` entries are stored now so the schema tracks ADR-004, but they are not executed yet.
+The current runtime executes these built-in families today:
+
+- shared `openai_compatible/http` for OpenAI, xAI, DeepSeek, Kimi, and z.ai
+- native `anthropic/http`
+- internal `ollama`
+
+`stdio` entries are still stored for future extension work, but they are not executed yet.
 
 **Auth strategies:** `none`, `api_key`, `browser_oidc`, `device_oidc`
 
@@ -74,6 +86,8 @@ The credential flags you use depend on the auth strategy:
 ```bash
 # API key auth (most common)
 rillan llm login openai-prod --api-key "sk-..."
+rillan llm login claude-prod --api-key "anthropic-key"
+rillan llm login deepseek-prod --api-key "deepseek-key"
 
 # OIDC-based auth
 rillan llm login corp-gpt \
@@ -249,11 +263,20 @@ When you change an endpoint URL, auth strategy, issuer, or audience on a provide
 ```bash
 # Provider endpoint changed
 rillan llm remove old-gpt
-rillan llm add new-gpt --backend openai_compatible --transport http --endpoint https://new-api.example/v1
+rillan llm add new-gpt --preset openai --endpoint https://new-api.example/v1
 rillan llm login new-gpt --api-key "sk-new-..."
 ```
 
 The keyring stores the full credential bundle (key/token + binding metadata). A credential is validated against its binding on use -- if the binding has drifted, `ResolveBearer` will return an error.
+
+## Adapter-host execution model
+
+M08 moves provider execution behind a host-backed runtime seam:
+
+- one host builds the active provider from the selected registry entry
+- bundled presets map named providers onto shared adapter families
+- Anthropic remains its own translated family
+- Ollama remains internal/core but now participates in the same high-level selection story
 
 ## Notes on Secrets
 
