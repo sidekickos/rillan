@@ -2,10 +2,10 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"time"
 
-	"github.com/sidekickos/rillan/internal/agent/skills"
+	toolskills "github.com/sidekickos/rillan/internal/agent/skills"
 )
 
 type Runner interface {
@@ -13,7 +13,7 @@ type Runner interface {
 }
 
 type SharedRunner struct {
-	registry *skills.Registry
+	tools ToolExecutor
 }
 
 type RunResult struct {
@@ -25,7 +25,7 @@ type RunResult struct {
 }
 
 func NewRunner() *SharedRunner {
-	return &SharedRunner{registry: skills.NewRegistry()}
+	return &SharedRunner{tools: NewReadOnlyToolRuntime()}
 }
 
 func (r *SharedRunner) Run(ctx context.Context, profile RoleProfile, pkg ContextPackage) (RunResult, error) {
@@ -65,29 +65,13 @@ func (r *SharedRunner) runSkillInvocations(ctx context.Context, invocations []Sk
 
 func (r *SharedRunner) runSkillInvocation(ctx context.Context, invocation SkillInvocation) (SkillResult, error) {
 	startedAt := time.Now()
-	var payload any
-	var err error
-	switch invocation.Kind {
-	case SkillKindReadFiles:
-		payload, err = r.registry.ReadFiles(ctx, skills.ReadFilesRequest{RepoRoot: invocation.RepoRoot, Paths: invocation.Paths})
-	case SkillKindSearchRepo:
-		payload, err = r.registry.SearchRepo(ctx, skills.SearchRepoRequest{RepoRoot: invocation.RepoRoot, Query: invocation.Query})
-	case SkillKindIndexLookup:
-		payload, err = r.registry.IndexLookup(ctx, skills.IndexLookupRequest{DBPath: invocation.DBPath, Query: invocation.Query})
-	case SkillKindGitStatus:
-		payload, err = r.registry.GitStatus(ctx, skills.GitStatusRequest{RepoRoot: invocation.RepoRoot})
-	case SkillKindGitDiff:
-		payload, err = r.registry.GitDiff(ctx, skills.GitDiffRequest{RepoRoot: invocation.RepoRoot, StagedOnly: invocation.StagedOnly})
-	default:
-		return SkillResult{}, nil
-	}
+	result, err := r.tools.ExecuteTool(ctx, ToolCall{Name: string(invocation.Kind), RepoRoot: invocation.RepoRoot, Paths: invocation.Paths, Query: invocation.Query, DBPath: invocation.DBPath, StagedOnly: invocation.StagedOnly})
 	if err != nil {
+		if errors.Is(err, toolskills.ErrUnknownReadOnlyTool) {
+			return SkillResult{}, nil
+		}
 		return SkillResult{}, err
 	}
 	_ = RecordSkillLatency(string(invocation.Kind), time.Since(startedAt), startedAt)
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return SkillResult{}, err
-	}
-	return SkillResult{Kind: invocation.Kind, Payload: encoded}, nil
+	return SkillResult{Kind: invocation.Kind, Payload: result.Payload}, nil
 }

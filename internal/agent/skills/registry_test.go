@@ -103,6 +103,33 @@ func TestRegistryGitCommandsReturnStructuredResults(t *testing.T) {
 	}
 }
 
+func TestRegistryExecuteDispatchesReadOnlyTool(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, "docs", "guide.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("hello world from file"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	registry := NewRegistry()
+	result, err := registry.Execute(context.Background(), ExecuteRequest{Name: ToolNameReadFiles, RepoRoot: repo, Paths: []string{"docs/guide.md"}})
+	if err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+	if got, want := result.Name, ToolNameReadFiles; got != want {
+		t.Fatalf("result name = %q, want %q", got, want)
+	}
+	payload, ok := result.Payload.(ReadFilesResult)
+	if !ok {
+		t.Fatalf("payload type = %T, want ReadFilesResult", result.Payload)
+	}
+	if got, want := len(payload.Files), 1; got != want {
+		t.Fatalf("files len = %d, want %d", got, want)
+	}
+}
+
 func stubGit(t *testing.T, fn func(context.Context, string, ...string) ([]byte, error)) {
 	t.Helper()
 	original := gitCommand
