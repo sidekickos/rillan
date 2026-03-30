@@ -113,18 +113,11 @@ func snippetAround(content string, idx int, maxChars int) string {
 		return strings.TrimSpace(content)
 	}
 	half := maxChars / 2
-	start := idx - half
-	if start < 0 {
-		start = 0
-	}
+	start := max(idx-half, 0)
 	end := start + maxChars
 	if end > len(content) {
 		end = len(content)
-		if end-maxChars > 0 {
-			start = end - maxChars
-		} else {
-			start = 0
-		}
+		start = max(end-maxChars, 0)
 	}
 	return trimText(content[start:end], maxChars)
 }

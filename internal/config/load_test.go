@@ -1,8 +1,15 @@
 package config
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -689,7 +696,7 @@ func TestLoadProjectRejectsInvalidProjectConfig(t *testing.T) {
 
 func TestLoadSystemAppliesDefaults(t *testing.T) {
 	key := []byte("0123456789abcdef0123456789abcdef")
-	payload, err := encryptSystemPolicyPayload(SystemPolicy{
+	payload, err := encryptSystemPolicyPayloadForTest(SystemPolicy{
 		Identity: SystemIdentityRules{People: []string{"alice@example.com"}},
 		Rules:    SystemPolicyRules{MaskPIIForRemote: true},
 	}, key, strings.NewReader("123456789012"))
@@ -742,7 +749,7 @@ func TestLoadSystemRejectsMalformedYAML(t *testing.T) {
 
 func TestLoadSystemRejectsWrongKey(t *testing.T) {
 	key := []byte("0123456789abcdef0123456789abcdef")
-	payload, err := encryptSystemPolicyPayload(SystemPolicy{Rules: SystemPolicyRules{MaskPIIForRemote: true}}, key, strings.NewReader("123456789012"))
+	payload, err := encryptSystemPolicyPayloadForTest(SystemPolicy{Rules: SystemPolicyRules{MaskPIIForRemote: true}}, key, strings.NewReader("123456789012"))
 	if err != nil {
 		t.Fatalf("encryptSystemPolicyPayload returned error: %v", err)
 	}
@@ -765,6 +772,31 @@ func TestLoadSystemRejectsMalformedCiphertext(t *testing.T) {
 	if _, err := LoadSystem(systemPath); err == nil {
 		t.Fatal("expected malformed ciphertext to fail")
 	}
+}
+
+func encryptSystemPolicyPayloadForTest(policy SystemPolicy, key []byte, random io.Reader) (string, error) {
+	plaintext, err := json.Marshal(policy)
+	if err != nil {
+		return "", fmt.Errorf("marshal system policy payload: %w", err)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", fmt.Errorf("create aes cipher: %w", err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("create aes-gcm cipher: %w", err)
+	}
+	if random == nil {
+		random = rand.Reader
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(random, nonce); err != nil {
+		return "", fmt.Errorf("read nonce: %w", err)
+	}
+	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
+	combined := append(nonce, ciphertext...)
+	return base64.StdEncoding.EncodeToString(combined), nil
 }
 
 func TestLoadSystemMissingReturnsNotExist(t *testing.T) {
