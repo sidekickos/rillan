@@ -13,8 +13,12 @@ const (
 	ProviderOpenAI           = "openai"
 	ProviderOpenAICompatible = "openai_compatible"
 	ProviderAnthropic        = "anthropic"
+	ProviderOllama           = "ollama"
+	ProviderDeepSeek         = "deepseek"
 	ProviderKimi             = "kimi"
 	ProviderLocal            = "local"
+	ProviderXAI              = "xai"
+	ProviderZAI              = "zai"
 
 	AuthStrategyNone        = "none"
 	AuthStrategyAPIKey      = "api_key"
@@ -35,6 +39,13 @@ const (
 	RoutePreferencePreferLocal = "prefer_local"
 	RoutePreferencePreferCloud = "prefer_cloud"
 	RoutePreferenceLocalOnly   = "local_only"
+
+	LLMPresetOpenAI    = "openai"
+	LLMPresetAnthropic = "anthropic"
+	LLMPresetXAI       = "xai"
+	LLMPresetDeepSeek  = "deepseek"
+	LLMPresetKimi      = "kimi"
+	LLMPresetZAI       = "zai"
 )
 
 // Config is the runtime configuration loaded from the main Rillan config file.
@@ -80,6 +91,7 @@ type LLMRegistryConfig struct {
 // plaintext config.
 type LLMProviderConfig struct {
 	ID            string   `yaml:"id,omitempty"`
+	Preset        string   `yaml:"preset,omitempty"`
 	Backend       string   `yaml:"backend,omitempty"`
 	Transport     string   `yaml:"transport,omitempty"`
 	Endpoint      string   `yaml:"endpoint,omitempty"`
@@ -111,6 +123,7 @@ type MCPServerConfig struct {
 // and allowlists have been applied.
 type ResolvedLLMProvider struct {
 	ID            string
+	Preset        string
 	Backend       string
 	Transport     string
 	Endpoint      string
@@ -119,6 +132,29 @@ type ResolvedLLMProvider struct {
 	DefaultModel  string
 	Capabilities  []string
 	CredentialRef string
+}
+
+type RuntimeProviderHostConfig struct {
+	Default   string
+	Providers []RuntimeProviderAdapterConfig
+}
+
+type RuntimeProviderAdapterConfig struct {
+	ID         string
+	Preset     string
+	Type       string
+	OpenAI     OpenAIConfig
+	Anthropic  AnthropicConfig
+	LocalModel LocalModelProvider
+}
+
+type LLMProviderPreset struct {
+	ID           string
+	Family       string
+	Endpoint     string
+	AuthStrategy string
+	DefaultModel string
+	Capabilities []string
 }
 
 type SystemConfig struct {
@@ -317,21 +353,95 @@ func DefaultConfig() Config {
 			},
 		},
 		LLMs: LLMRegistryConfig{
-			Default: "openai",
-			Providers: []LLMProviderConfig{{
-				ID:            "openai",
-				Backend:       LLMBackendOpenAICompatible,
-				Transport:     LLMTransportHTTP,
-				Endpoint:      "https://api.openai.com/v1",
-				AuthStrategy:  AuthStrategyBrowserOIDC,
-				DefaultModel:  "gpt-5",
-				Capabilities:  []string{"chat", "reasoning", "tool_calling"},
-				CredentialRef: "keyring://rillan/llm/openai",
-			}},
+			Default: LLMPresetOpenAI,
+			Providers: []LLMProviderConfig{
+				BundledLLMProviderPreset(LLMPresetOpenAI).ProviderConfig(LLMPresetOpenAI),
+				BundledLLMProviderPreset(LLMPresetAnthropic).ProviderConfig(LLMPresetAnthropic),
+				BundledLLMProviderPreset(LLMPresetXAI).ProviderConfig(LLMPresetXAI),
+				BundledLLMProviderPreset(LLMPresetDeepSeek).ProviderConfig(LLMPresetDeepSeek),
+				BundledLLMProviderPreset(LLMPresetKimi).ProviderConfig(LLMPresetKimi),
+				BundledLLMProviderPreset(LLMPresetZAI).ProviderConfig(LLMPresetZAI),
+			},
 		},
 		MCPs: MCPRegistryConfig{
 			Servers: []MCPServerConfig{},
 		},
+	}
+}
+
+func BundledLLMProviderPresets() []LLMProviderPreset {
+	return []LLMProviderPreset{
+		{
+			ID:           LLMPresetOpenAI,
+			Family:       ProviderOpenAICompatible,
+			Endpoint:     "https://api.openai.com/v1",
+			AuthStrategy: AuthStrategyAPIKey,
+			DefaultModel: "gpt-5",
+			Capabilities: []string{"chat", "reasoning", "tool_calling"},
+		},
+		{
+			ID:           LLMPresetAnthropic,
+			Family:       ProviderAnthropic,
+			Endpoint:     "https://api.anthropic.com",
+			AuthStrategy: AuthStrategyAPIKey,
+			DefaultModel: "claude-sonnet-4-5",
+			Capabilities: []string{"chat", "reasoning", "tool_calling"},
+		},
+		{
+			ID:           LLMPresetXAI,
+			Family:       ProviderOpenAICompatible,
+			Endpoint:     "https://api.x.ai/v1",
+			AuthStrategy: AuthStrategyAPIKey,
+			DefaultModel: "grok-4",
+			Capabilities: []string{"chat", "reasoning", "tool_calling"},
+		},
+		{
+			ID:           LLMPresetDeepSeek,
+			Family:       ProviderOpenAICompatible,
+			Endpoint:     "https://api.deepseek.com/v1",
+			AuthStrategy: AuthStrategyAPIKey,
+			DefaultModel: "deepseek-chat",
+			Capabilities: []string{"chat", "reasoning", "tool_calling"},
+		},
+		{
+			ID:           LLMPresetKimi,
+			Family:       ProviderOpenAICompatible,
+			Endpoint:     "https://api.moonshot.ai/v1",
+			AuthStrategy: AuthStrategyAPIKey,
+			DefaultModel: "kimi-k2-0711-preview",
+			Capabilities: []string{"chat", "reasoning", "tool_calling"},
+		},
+		{
+			ID:           LLMPresetZAI,
+			Family:       ProviderOpenAICompatible,
+			Endpoint:     "https://api.z.ai/api/paas/v4",
+			AuthStrategy: AuthStrategyAPIKey,
+			DefaultModel: "glm-4.5",
+			Capabilities: []string{"chat", "reasoning", "tool_calling"},
+		},
+	}
+}
+
+func BundledLLMProviderPreset(id string) LLMProviderPreset {
+	for _, preset := range BundledLLMProviderPresets() {
+		if preset.ID == normalizeString(id) {
+			return preset
+		}
+	}
+	return LLMProviderPreset{}
+}
+
+func (p LLMProviderPreset) ProviderConfig(id string) LLMProviderConfig {
+	return LLMProviderConfig{
+		ID:            id,
+		Preset:        p.ID,
+		Backend:       p.Family,
+		Transport:     LLMTransportHTTP,
+		Endpoint:      p.Endpoint,
+		AuthStrategy:  p.AuthStrategy,
+		DefaultModel:  p.DefaultModel,
+		Capabilities:  append([]string(nil), p.Capabilities...),
+		CredentialRef: "keyring://rillan/llm/" + id,
 	}
 }
 

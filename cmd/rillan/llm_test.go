@@ -27,10 +27,10 @@ func TestLLMAddCreatesProviderEntry(t *testing.T) {
 	if got, want := cfg.LLMs.Default, "openai"; got != want {
 		t.Fatalf("llms.default = %q, want %q", got, want)
 	}
-	if got, want := len(cfg.LLMs.Providers), 2; got != want {
+	if got, want := len(cfg.LLMs.Providers), 7; got != want {
 		t.Fatalf("len(llms.providers) = %d, want %d", got, want)
 	}
-	provider := cfg.LLMs.Providers[1]
+	provider := cfg.LLMs.Providers[6]
 	if got, want := provider.AuthStrategy, config.AuthStrategyAPIKey; got != want {
 		t.Fatalf("auth_strategy = %q, want %q", got, want)
 	}
@@ -39,6 +39,34 @@ func TestLLMAddCreatesProviderEntry(t *testing.T) {
 	}
 	if got, want := strings.Join(provider.Capabilities, ","), "chat,reasoning"; got != want {
 		t.Fatalf("capabilities = %q, want %q", got, want)
+	}
+}
+
+func TestLLMAddWithPresetCreatesBundledProviderEntry(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	cmd := newLLMCommand()
+	cmd.SetArgs([]string{"--config", configPath, "add", "deepseek-team", "--preset", "deepseek"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
+	}
+
+	cfg, err := config.LoadForEdit(configPath)
+	if err != nil {
+		t.Fatalf("LoadForEdit returned error: %v", err)
+	}
+	provider := cfg.LLMs.Providers[len(cfg.LLMs.Providers)-1]
+	if got, want := provider.Preset, config.LLMPresetDeepSeek; got != want {
+		t.Fatalf("preset = %q, want %q", got, want)
+	}
+	if got, want := provider.Backend, config.LLMBackendOpenAICompatible; got != want {
+		t.Fatalf("backend = %q, want %q", got, want)
+	}
+	if got, want := provider.Endpoint, "https://api.deepseek.com/v1"; got != want {
+		t.Fatalf("endpoint = %q, want %q", got, want)
+	}
+	if got, want := provider.AuthStrategy, config.AuthStrategyAPIKey; got != want {
+		t.Fatalf("auth_strategy = %q, want %q", got, want)
 	}
 }
 
@@ -89,8 +117,8 @@ func TestLLMRemoveDeletesProviderEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadForEdit returned error: %v", err)
 	}
-	if got := len(reloaded.LLMs.Providers); got != 1 {
-		t.Fatalf("len(llms.providers) = %d, want 1", got)
+	if got := len(reloaded.LLMs.Providers); got != 6 {
+		t.Fatalf("len(llms.providers) = %d, want 6", got)
 	}
 	if got, want := reloaded.LLMs.Default, "openai"; got != want {
 		t.Fatalf("llms.default = %q, want %q", got, want)
@@ -103,7 +131,7 @@ func TestLLMListPrintsSortedProviders(t *testing.T) {
 	cfg.LLMs.Default = "work-gpt"
 	cfg.LLMs.Providers = []config.LLMProviderConfig{
 		{ID: "repo-plugin", Backend: "custom-backend", Transport: config.LLMTransportSTDIO, Command: []string{"rillan-provider-demo"}, AuthStrategy: config.AuthStrategyNone},
-		{ID: "work-gpt", Backend: config.LLMBackendOpenAICompatible, Transport: config.LLMTransportHTTP, Endpoint: "https://api.openai.com/v1", AuthStrategy: config.AuthStrategyBrowserOIDC},
+		{ID: "work-gpt", Preset: config.LLMPresetXAI, Backend: config.LLMBackendOpenAICompatible, Transport: config.LLMTransportHTTP, Endpoint: "https://api.x.ai/v1", AuthStrategy: config.AuthStrategyAPIKey},
 	}
 	if err := config.Write(configPath, cfg); err != nil {
 		t.Fatalf("Write returned error: %v", err)
@@ -122,6 +150,9 @@ func TestLLMListPrintsSortedProviders(t *testing.T) {
 	output := stdout.String()
 	if !strings.Contains(output, "default: work-gpt") {
 		t.Fatalf("output missing default:\n%s", output)
+	}
+	if !strings.Contains(output, "preset: xai") {
+		t.Fatalf("output missing preset:\n%s", output)
 	}
 	if strings.Index(output, "- id: repo-plugin") > strings.Index(output, "- id: work-gpt") {
 		t.Fatalf("providers not sorted by id:\n%s", output)

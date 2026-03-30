@@ -166,6 +166,7 @@ func ResolveActiveLLMProvider(cfg Config, project ProjectConfig) (ResolvedLLMPro
 		}
 		return ResolvedLLMProvider{
 			ID:            provider.ID,
+			Preset:        strings.TrimSpace(provider.Preset),
 			Backend:       strings.TrimSpace(provider.Backend),
 			Transport:     strings.TrimSpace(provider.Transport),
 			Endpoint:      strings.TrimSpace(provider.Endpoint),
@@ -180,36 +181,148 @@ func ResolveActiveLLMProvider(cfg Config, project ProjectConfig) (ResolvedLLMPro
 }
 
 func ResolveRuntimeProviderConfig(cfg Config, project ProjectConfig) (ProviderConfig, error) {
-	if cfg.SchemaVersion < SchemaVersionV2 || len(cfg.LLMs.Providers) == 0 {
-		return cfg.Provider, nil
-	}
-	selected, err := ResolveActiveLLMProvider(cfg, project)
+	hostCfg, err := ResolveRuntimeProviderHostConfig(cfg, project)
 	if err != nil {
 		return ProviderConfig{}, err
 	}
-	if selected.Transport != LLMTransportHTTP {
-		return ProviderConfig{}, fmt.Errorf("llm provider %q uses unsupported transport %q in the current runtime", selected.ID, selected.Transport)
-	}
-	if selected.Backend != LLMBackendOpenAICompatible {
-		return ProviderConfig{}, fmt.Errorf("llm provider %q uses unsupported backend %q in the current runtime", selected.ID, selected.Backend)
-	}
-	secret := ""
-	if selected.AuthStrategy != AuthStrategyNone && selected.CredentialRef != "" {
-		binding := secretstore.Binding{Endpoint: selected.Endpoint, AuthStrategy: selected.AuthStrategy}
-		resolved, err := secretstore.ResolveBearer(selected.CredentialRef, binding)
-		if err != nil {
-			return ProviderConfig{}, err
+	for _, provider := range hostCfg.Providers {
+		if provider.ID != hostCfg.Default {
+			continue
 		}
-		secret = resolved
+		return ProviderConfig{
+			Type:      provider.Type,
+			OpenAI:    provider.OpenAI,
+			Anthropic: provider.Anthropic,
+			Local:     provider.LocalModel,
+		}, nil
 	}
-	providerCfg := cfg.Provider
-	providerCfg.Type = ProviderOpenAI
-	providerCfg.OpenAI.BaseURL = selected.Endpoint
-	providerCfg.OpenAI.APIKey = secret
-	providerCfg.Anthropic.Enabled = false
-	providerCfg.Anthropic.APIKey = ""
-	return providerCfg, nil
+	return ProviderConfig{}, fmt.Errorf("default runtime provider %q not found", hostCfg.Default)
 }
+
+func ResolveRuntimeProviderHostConfig(cfg Config, project ProjectConfig) (RuntimeProviderHostConfig, error) {
+	if cfg.SchemaVersion < SchemaVersionV2 || len(cfg.LLMs.Providers) == 0 {
+		return RuntimeProviderHostConfig{
+			Default: defaultRuntimeProviderID,
+			Providers: []RuntimeProviderAdapterConfig{{
+				ID:         defaultRuntimeProviderID,
+				Type:       cfg.Provider.Type,
+				OpenAI:     cfg.Provider.OpenAI,
+				Anthropic:  cfg.Provider.Anthropic,
+				LocalModel: cfg.Provider.Local,
+			}},
+		}, nil
+	}
+	selected, err := ResolveActiveLLMProvider(cfg, project)
+	if err != nil {
+		return RuntimeProviderHostConfig{}, err
+	}
+	if selected.Transport != LLMTransportHTTP {
+		return RuntimeProviderHostConfig{}, fmt.Errorf("llm provider %q uses unsupported transport %q in the current runtime", selected.ID, selected.Transport)
+	}
+	providerCfg, err := resolveRuntimeProviderAdapterConfig(cfg, selected)
+	if err != nil {
+		return RuntimeProviderHostConfig{}, err
+	}
+	return RuntimeProviderHostConfig{
+		Default:   selected.ID,
+		Providers: []RuntimeProviderAdapterConfig{providerCfg},
+	}, nil
+}
+
+func resolveRuntimeProviderAdapterConfig(cfg Config, selected ResolvedLLMProvider) (RuntimeProviderAdapterConfig, error) {
+	providerCfg := RuntimeProviderAdapterConfig{
+		ID:     selected.ID,
+		Preset: selected.Preset,
+		Type:   selected.Backend,
+	}
+
+	switch selected.Backend {
+	case LLMBackendOpenAICompatible:
+		secret, err := resolveRuntimeProviderBearer(selected)
+		if err != nil {
+			return RuntimeProviderAdapterConfig{}, err
+		}
+		providerCfg.OpenAI = OpenAIConfig{
+			BaseURL: selected.Endpoint,
+			APIKey:  secret,
+		}
+		return providerCfg, nil
+	case ProviderAnthropic:
+		apiKey, err := resolveRuntimeProviderAPIKey(selected)
+		if err != nil {
+			return RuntimeProviderAdapterConfig{}, err
+		}
+		providerCfg.Anthropic = AnthropicConfig{
+			Enabled: true,
+			BaseURL: selected.Endpoint,
+			APIKey:  apiKey,
+		}
+		return providerCfg, nil
+	case ProviderOllama:
+		baseURL := strings.TrimSpace(selected.Endpoint)
+		if baseURL == "" {
+			baseURL = strings.TrimSpace(cfg.LocalModel.BaseURL)
+		}
+		if baseURL == "" {
+			return RuntimeProviderAdapterConfig{}, fmt.Errorf("llm provider %q endpoint must not be empty for ollama", selected.ID)
+		}
+		providerCfg.LocalModel = LocalModelProvider{BaseURL: baseURL}
+		return providerCfg, nil
+	default:
+		return RuntimeProviderAdapterConfig{}, fmt.Errorf("llm provider %q uses unsupported backend %q in the current runtime", selected.ID, selected.Backend)
+	}
+}
+
+func resolveRuntimeProviderBearer(selected ResolvedLLMProvider) (string, error) {
+	if selected.AuthStrategy == AuthStrategyNone || selected.CredentialRef == "" {
+		return "", nil
+	}
+	binding := secretstore.Binding{Endpoint: selected.Endpoint, AuthStrategy: selected.AuthStrategy}
+	resolved, err := secretstore.ResolveBearer(selected.CredentialRef, binding)
+	if err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
+
+func resolveRuntimeProviderAPIKey(selected ResolvedLLMProvider) (string, error) {
+	if selected.AuthStrategy != AuthStrategyAPIKey {
+		return "", fmt.Errorf("llm provider %q uses unsupported auth strategy %q for anthropic; only %q is supported", selected.ID, selected.AuthStrategy, AuthStrategyAPIKey)
+	}
+	if strings.TrimSpace(selected.CredentialRef) == "" {
+		return "", fmt.Errorf("llm provider %q must include credential_ref when auth_strategy is %q", selected.ID, AuthStrategyAPIKey)
+	}
+	credential, err := secretstore.Load(selected.CredentialRef)
+	if err != nil {
+		return "", err
+	}
+	binding := secretstore.Binding{Endpoint: selected.Endpoint, AuthStrategy: selected.AuthStrategy}
+	if err := validateRuntimeProviderCredentialBinding(credential, binding); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(credential.APIKey) == "" {
+		return "", fmt.Errorf("credential at %s does not contain an api key", selected.CredentialRef)
+	}
+	return credential.APIKey, nil
+}
+
+func validateRuntimeProviderCredentialBinding(credential secretstore.Credential, binding secretstore.Binding) error {
+	if binding.Endpoint != "" && credential.Endpoint != "" && credential.Endpoint != binding.Endpoint {
+		return fmt.Errorf("stored credential endpoint %q does not match %q", credential.Endpoint, binding.Endpoint)
+	}
+	if binding.AuthStrategy != "" && credential.AuthStrategy != "" && credential.AuthStrategy != binding.AuthStrategy {
+		return fmt.Errorf("stored credential auth strategy %q does not match %q", credential.AuthStrategy, binding.AuthStrategy)
+	}
+	if binding.Issuer != "" && credential.Issuer != "" && credential.Issuer != binding.Issuer {
+		return fmt.Errorf("stored credential issuer %q does not match %q", credential.Issuer, binding.Issuer)
+	}
+	if binding.Audience != "" && credential.Audience != "" && credential.Audience != binding.Audience {
+		return fmt.Errorf("stored credential audience %q does not match %q", credential.Audience, binding.Audience)
+	}
+	return nil
+}
+
+const defaultRuntimeProviderID = "default"
 
 func applyDerivedDefaults(cfg *Config, configPath string) {
 	if cfg.SchemaVersion == 0 {
@@ -278,11 +391,46 @@ func applyDerivedDefaults(cfg *Config, configPath string) {
 	if cfg.LLMs.Providers == nil {
 		cfg.LLMs.Providers = slices.Clone(DefaultConfig().LLMs.Providers)
 	}
+	for i := range cfg.LLMs.Providers {
+		applyLLMProviderPresetDefaults(&cfg.LLMs.Providers[i])
+	}
 	if cfg.LLMs.Default == "" && len(cfg.LLMs.Providers) > 0 {
 		cfg.LLMs.Default = cfg.LLMs.Providers[0].ID
 	}
 	if cfg.MCPs.Servers == nil {
 		cfg.MCPs.Servers = []MCPServerConfig{}
+	}
+}
+
+func applyLLMProviderPresetDefaults(provider *LLMProviderConfig) {
+	presetID := normalizeString(provider.Preset)
+	if presetID == "" {
+		return
+	}
+	preset := BundledLLMProviderPreset(presetID)
+	if preset.ID == "" {
+		return
+	}
+	if strings.TrimSpace(provider.Backend) == "" {
+		provider.Backend = preset.Family
+	}
+	if strings.TrimSpace(provider.Transport) == "" {
+		provider.Transport = LLMTransportHTTP
+	}
+	if strings.TrimSpace(provider.Endpoint) == "" {
+		provider.Endpoint = preset.Endpoint
+	}
+	if strings.TrimSpace(provider.AuthStrategy) == "" {
+		provider.AuthStrategy = preset.AuthStrategy
+	}
+	if strings.TrimSpace(provider.DefaultModel) == "" {
+		provider.DefaultModel = preset.DefaultModel
+	}
+	if len(provider.Capabilities) == 0 {
+		provider.Capabilities = append([]string(nil), preset.Capabilities...)
+	}
+	if strings.TrimSpace(provider.CredentialRef) == "" && strings.TrimSpace(provider.ID) != "" {
+		provider.CredentialRef = "keyring://rillan/llm/" + strings.TrimSpace(provider.ID)
 	}
 }
 

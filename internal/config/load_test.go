@@ -267,6 +267,9 @@ func TestLoadInitializesSchemaV2Registries(t *testing.T) {
 	if cfg.LLMs.Providers == nil {
 		t.Fatal("expected llm providers to be initialized")
 	}
+	if got, want := len(cfg.LLMs.Providers), 6; got != want {
+		t.Fatalf("len(llms.providers) = %d, want %d", got, want)
+	}
 	if cfg.MCPs.Servers == nil {
 		t.Fatal("expected mcp servers to be initialized")
 	}
@@ -285,6 +288,9 @@ func TestLoadForEditReturnsDefaultsWhenConfigMissing(t *testing.T) {
 	}
 	if cfg.LLMs.Providers == nil {
 		t.Fatal("expected llm providers to be initialized")
+	}
+	if got, want := len(cfg.LLMs.Providers), 6; got != want {
+		t.Fatalf("len(llms.providers) = %d, want %d", got, want)
 	}
 	if cfg.MCPs.Servers == nil {
 		t.Fatal("expected mcp servers to be initialized")
@@ -315,12 +321,46 @@ func TestWritePersistsSchemaV2Config(t *testing.T) {
 	if got, want := reloaded.LLMs.Default, "work-gpt"; got != want {
 		t.Fatalf("llms.default = %q, want %q", got, want)
 	}
-	if got, want := len(reloaded.LLMs.Providers), 2; got != want {
+	if got, want := len(reloaded.LLMs.Providers), 7; got != want {
 		t.Fatalf("len(llms.providers) = %d, want %d", got, want)
 	}
 }
 
-func TestLoadResolvesSelectedLLMProviderFromCredentialStore(t *testing.T) {
+func TestLoadAppliesBundledPresetDefaults(t *testing.T) {
+	path := writeTempConfig(t, `schema_version: 2
+llms:
+  default: "deepseek-work"
+  providers:
+    - id: "deepseek-work"
+      preset: "deepseek"
+runtime:
+  vector_store_mode: "embedded"
+`)
+
+	cfg, err := LoadForEdit(path)
+	if err != nil {
+		t.Fatalf("LoadForEdit returned error: %v", err)
+	}
+
+	provider := cfg.LLMs.Providers[0]
+	if got, want := provider.Backend, LLMBackendOpenAICompatible; got != want {
+		t.Fatalf("backend = %q, want %q", got, want)
+	}
+	if got, want := provider.Transport, LLMTransportHTTP; got != want {
+		t.Fatalf("transport = %q, want %q", got, want)
+	}
+	if got, want := provider.Endpoint, "https://api.deepseek.com/v1"; got != want {
+		t.Fatalf("endpoint = %q, want %q", got, want)
+	}
+	if got, want := provider.AuthStrategy, AuthStrategyAPIKey; got != want {
+		t.Fatalf("auth_strategy = %q, want %q", got, want)
+	}
+	if got, want := provider.CredentialRef, "keyring://rillan/llm/deepseek-work"; got != want {
+		t.Fatalf("credential_ref = %q, want %q", got, want)
+	}
+}
+
+func TestLoadResolvesSelectedLLMProviderHostFromCredentialStore(t *testing.T) {
 	store := map[string]string{}
 	secretstore.SetKeyringSetForTest(func(service string, user string, password string) error {
 		store[service+"/"+user] = password
@@ -359,25 +399,186 @@ runtime:
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
-	resolved, err := ResolveRuntimeProviderConfig(cfg, DefaultProjectConfig())
+	resolved, err := ResolveRuntimeProviderHostConfig(cfg, DefaultProjectConfig())
 	if err != nil {
-		t.Fatalf("ResolveRuntimeProviderConfig returned error: %v", err)
+		t.Fatalf("ResolveRuntimeProviderHostConfig returned error: %v", err)
 	}
-	if got, want := resolved.Type, ProviderOpenAI; got != want {
+	if got, want := resolved.Default, "work-gpt"; got != want {
+		t.Fatalf("default provider = %q, want %q", got, want)
+	}
+	if got, want := len(resolved.Providers), 1; got != want {
+		t.Fatalf("provider count = %d, want %d", got, want)
+	}
+	if got, want := resolved.Providers[0].Type, ProviderOpenAICompatible; got != want {
 		t.Fatalf("provider.type = %q, want %q", got, want)
 	}
-	if got, want := resolved.OpenAI.APIKey, "secret-key"; got != want {
+	if got, want := resolved.Providers[0].OpenAI.APIKey, "secret-key"; got != want {
 		t.Fatalf("provider.openai.api_key = %q, want %q", got, want)
 	}
 }
 
-func TestResolveRuntimeProviderConfigHonorsProjectAllowlist(t *testing.T) {
+func TestResolveRuntimeProviderHostConfigUsesPresetFamilyForXAI(t *testing.T) {
+	store := map[string]string{}
+	secretstore.SetKeyringSetForTest(func(service string, user string, password string) error {
+		store[service+"/"+user] = password
+		return nil
+	})
+	secretstore.SetKeyringGetForTest(func(service string, user string) (string, error) {
+		value, ok := store[service+"/"+user]
+		if !ok {
+			return "", keyring.ErrNotFound
+		}
+		return value, nil
+	})
+	t.Cleanup(func() {
+		secretstore.SetKeyringSetForTest(keyring.Set)
+		secretstore.SetKeyringGetForTest(keyring.Get)
+	})
+
+	if err := secretstore.Save("keyring://rillan/llm/xai-work", secretstore.Credential{Kind: "api_key", APIKey: "xai-secret", Endpoint: "https://api.x.ai/v1", AuthStrategy: AuthStrategyAPIKey}); err != nil {
+		t.Fatalf("Save returned error: %v", err)
+	}
+
+	path := writeTempConfig(t, `schema_version: 2
+llms:
+  default: "xai-work"
+  providers:
+    - id: "xai-work"
+      preset: "xai"
+      credential_ref: "keyring://rillan/llm/xai-work"
+runtime:
+  vector_store_mode: "embedded"
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	resolved, err := ResolveRuntimeProviderHostConfig(cfg, DefaultProjectConfig())
+	if err != nil {
+		t.Fatalf("ResolveRuntimeProviderHostConfig returned error: %v", err)
+	}
+	if got, want := resolved.Providers[0].Type, ProviderOpenAICompatible; got != want {
+		t.Fatalf("provider.type = %q, want %q", got, want)
+	}
+	if got, want := resolved.Providers[0].Preset, LLMPresetXAI; got != want {
+		t.Fatalf("provider.preset = %q, want %q", got, want)
+	}
+	if got, want := resolved.Providers[0].OpenAI.BaseURL, "https://api.x.ai/v1"; got != want {
+		t.Fatalf("provider.openai.base_url = %q, want %q", got, want)
+	}
+	if got, want := resolved.Providers[0].OpenAI.APIKey, "xai-secret"; got != want {
+		t.Fatalf("provider.openai.api_key = %q, want %q", got, want)
+	}
+}
+
+func TestResolveRuntimeProviderHostConfigUsesAnthropicPresetFamily(t *testing.T) {
+	store := map[string]string{}
+	secretstore.SetKeyringSetForTest(func(service string, user string, password string) error {
+		store[service+"/"+user] = password
+		return nil
+	})
+	secretstore.SetKeyringGetForTest(func(service string, user string) (string, error) {
+		value, ok := store[service+"/"+user]
+		if !ok {
+			return "", keyring.ErrNotFound
+		}
+		return value, nil
+	})
+	t.Cleanup(func() {
+		secretstore.SetKeyringSetForTest(keyring.Set)
+		secretstore.SetKeyringGetForTest(keyring.Get)
+	})
+
+	if err := secretstore.Save("keyring://rillan/llm/anthropic-work", secretstore.Credential{Kind: "api_key", APIKey: "anthropic-secret", Endpoint: "https://api.anthropic.com", AuthStrategy: AuthStrategyAPIKey}); err != nil {
+		t.Fatalf("Save returned error: %v", err)
+	}
+
+	path := writeTempConfig(t, `schema_version: 2
+llms:
+  default: "anthropic-work"
+  providers:
+    - id: "anthropic-work"
+      preset: "anthropic"
+      credential_ref: "keyring://rillan/llm/anthropic-work"
+runtime:
+  vector_store_mode: "embedded"
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	resolved, err := ResolveRuntimeProviderHostConfig(cfg, DefaultProjectConfig())
+	if err != nil {
+		t.Fatalf("ResolveRuntimeProviderHostConfig returned error: %v", err)
+	}
+	if got, want := resolved.Providers[0].Type, ProviderAnthropic; got != want {
+		t.Fatalf("provider.type = %q, want %q", got, want)
+	}
+	if got, want := resolved.Providers[0].Preset, LLMPresetAnthropic; got != want {
+		t.Fatalf("provider.preset = %q, want %q", got, want)
+	}
+	if got, want := resolved.Providers[0].Anthropic.BaseURL, "https://api.anthropic.com"; got != want {
+		t.Fatalf("provider.anthropic.base_url = %q, want %q", got, want)
+	}
+	if got, want := resolved.Providers[0].Anthropic.APIKey, "anthropic-secret"; got != want {
+		t.Fatalf("provider.anthropic.api_key = %q, want %q", got, want)
+	}
+	if got := resolved.Providers[0].OpenAI.BaseURL; got != "" {
+		t.Fatalf("provider.openai.base_url = %q, want empty", got)
+	}
+}
+
+func TestResolveRuntimeProviderHostConfigUsesInternalOllamaFamily(t *testing.T) {
+	path := writeTempConfig(t, `schema_version: 2
+llms:
+  default: "local-chat"
+  providers:
+    - id: "local-chat"
+      backend: "ollama"
+      transport: "http"
+      default_model: "qwen3:8b"
+local_model:
+  enabled: true
+  base_url: "http://127.0.0.1:11434"
+  embed_model: "nomic-embed-text"
+runtime:
+  vector_store_mode: "embedded"
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	resolved, err := ResolveRuntimeProviderHostConfig(cfg, DefaultProjectConfig())
+	if err != nil {
+		t.Fatalf("ResolveRuntimeProviderHostConfig returned error: %v", err)
+	}
+	if got, want := resolved.Default, "local-chat"; got != want {
+		t.Fatalf("default provider = %q, want %q", got, want)
+	}
+	if got, want := resolved.Providers[0].Type, ProviderOllama; got != want {
+		t.Fatalf("provider.type = %q, want %q", got, want)
+	}
+	if got, want := resolved.Providers[0].LocalModel.BaseURL, "http://127.0.0.1:11434"; got != want {
+		t.Fatalf("provider.local_model.base_url = %q, want %q", got, want)
+	}
+	if got := resolved.Providers[0].OpenAI.BaseURL; got != "" {
+		t.Fatalf("provider.openai.base_url = %q, want empty", got)
+	}
+	if got := resolved.Providers[0].Anthropic.BaseURL; got != "" {
+		t.Fatalf("provider.anthropic.base_url = %q, want empty", got)
+	}
+}
+
+func TestResolveRuntimeProviderHostConfigHonorsProjectAllowlist(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.LLMs.Default = "openai"
 	project := DefaultProjectConfig()
 	project.Providers.LLMAllowed = []string{"local-only"}
 
-	if _, err := ResolveRuntimeProviderConfig(cfg, project); err == nil {
+	if _, err := ResolveRuntimeProviderHostConfig(cfg, project); err == nil {
 		t.Fatal("expected project llm allowlist to reject the default provider")
 	}
 }

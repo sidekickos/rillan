@@ -148,6 +148,13 @@ func ValidateForMode(cfg Config, mode ValidationMode) error {
 			if strings.TrimSpace(cfg.LLMs.Default) == "" {
 				return fmt.Errorf("llms.default must not be empty")
 			}
+			for _, provider := range cfg.LLMs.Providers {
+				if presetID := strings.TrimSpace(provider.Preset); presetID != "" {
+					if BundledLLMProviderPreset(presetID).ID == "" {
+						return fmt.Errorf("llm provider %q preset %q is not bundled", provider.ID, presetID)
+					}
+				}
+			}
 			active, err := ResolveActiveLLMProvider(cfg, DefaultProjectConfig())
 			if err != nil {
 				return err
@@ -157,6 +164,12 @@ func ValidateForMode(cfg Config, mode ValidationMode) error {
 			}
 			switch active.Transport {
 			case LLMTransportHTTP:
+				if normalizeString(active.Backend) == ProviderOllama {
+					if strings.TrimSpace(active.Endpoint) == "" && strings.TrimSpace(cfg.LocalModel.BaseURL) == "" {
+						return fmt.Errorf("llm provider %q endpoint must not be empty when backend is %q and local_model.base_url is empty", active.ID, ProviderOllama)
+					}
+					break
+				}
 				if strings.TrimSpace(active.Endpoint) == "" {
 					return fmt.Errorf("llm provider %q endpoint must not be empty when transport is %q", active.ID, LLMTransportHTTP)
 				}

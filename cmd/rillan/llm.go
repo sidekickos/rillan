@@ -31,6 +31,7 @@ func newLLMCommand() *cobra.Command {
 }
 
 func newLLMAddCommand(configPath *string) *cobra.Command {
+	var preset string
 	var backend string
 	var transport string
 	var endpoint string
@@ -44,16 +45,9 @@ func newLLMAddCommand(configPath *string) *cobra.Command {
 		Short: "Add a named LLM provider entry",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			entry := config.LLMProviderConfig{
-				ID:            strings.TrimSpace(args[0]),
-				Backend:       normalizeLLMBackend(backend, transport),
-				Transport:     normalizeLLMTransport(transport),
-				Endpoint:      strings.TrimSpace(endpoint),
-				Command:       normalizeCommand(command),
-				AuthStrategy:  normalizeAuthStrategy(authStrategy, transport),
-				DefaultModel:  strings.TrimSpace(defaultModel),
-				Capabilities:  normalizeCapabilities(capabilities),
-				CredentialRef: credentialRefForLLM(args[0]),
+			entry, err := buildLLMProviderEntry(strings.TrimSpace(args[0]), preset, backend, transport, endpoint, command, authStrategy, defaultModel, capabilities)
+			if err != nil {
+				return err
 			}
 			if err := validateLLMProviderEntry(entry); err != nil {
 				return err
@@ -76,6 +70,7 @@ func newLLMAddCommand(configPath *string) *cobra.Command {
 		},
 	}
 
+	cmd.Flags().StringVar(&preset, "preset", "", "Bundled provider preset (openai, xai, deepseek, kimi, zai)")
 	cmd.Flags().StringVar(&backend, "backend", "", "Provider backend identity (for example openai_compatible)")
 	cmd.Flags().StringVar(&transport, "transport", config.LLMTransportHTTP, "Provider transport (http or stdio)")
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Provider endpoint URL")
@@ -136,6 +131,9 @@ func newLLMListCommand(configPath *string) *cobra.Command {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "default: %s\n", cfg.LLMs.Default)
 			for _, provider := range providers {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "- id: %s\n  backend: %s\n  transport: %s\n  endpoint: %s\n  auth_strategy: %s\n  default_model: %s\n", provider.ID, provider.Backend, provider.Transport, provider.Endpoint, provider.AuthStrategy, provider.DefaultModel)
+				if provider.Preset != "" {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  preset: %s\n", provider.Preset)
+				}
 				if len(provider.Command) > 0 {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  command: %s\n", strings.Join(provider.Command, " "))
 				}
@@ -225,6 +223,49 @@ func newLLMLogoutCommand(configPath *string) *cobra.Command {
 
 func credentialRefForLLM(id string) string {
 	return fmt.Sprintf("keyring://rillan/llm/%s", strings.TrimSpace(id))
+}
+
+func buildLLMProviderEntry(id string, preset string, backend string, transport string, endpoint string, command []string, authStrategy string, defaultModel string, capabilities []string) (config.LLMProviderConfig, error) {
+	entry := config.LLMProviderConfig{
+		ID:            strings.TrimSpace(id),
+		Preset:        strings.ToLower(strings.TrimSpace(preset)),
+		Backend:       normalizeLLMBackend(backend, transport),
+		Transport:     normalizeLLMTransport(transport),
+		Endpoint:      strings.TrimSpace(endpoint),
+		Command:       normalizeCommand(command),
+		AuthStrategy:  normalizeAuthStrategy(authStrategy, transport),
+		DefaultModel:  strings.TrimSpace(defaultModel),
+		Capabilities:  normalizeCapabilities(capabilities),
+		CredentialRef: credentialRefForLLM(id),
+	}
+	if entry.Preset == "" {
+		return entry, nil
+	}
+	presetConfig := config.BundledLLMProviderPreset(entry.Preset)
+	if presetConfig.ID == "" {
+		return config.LLMProviderConfig{}, fmt.Errorf("unsupported llm preset %q", entry.Preset)
+	}
+	presetEntry := presetConfig.ProviderConfig(entry.ID)
+	presetEntry.Command = entry.Command
+	if entry.Backend != "" {
+		presetEntry.Backend = entry.Backend
+	}
+	if entry.Transport != "" {
+		presetEntry.Transport = entry.Transport
+	}
+	if entry.Endpoint != "" {
+		presetEntry.Endpoint = entry.Endpoint
+	}
+	if entry.AuthStrategy != "" {
+		presetEntry.AuthStrategy = entry.AuthStrategy
+	}
+	if entry.DefaultModel != "" {
+		presetEntry.DefaultModel = entry.DefaultModel
+	}
+	if len(entry.Capabilities) > 0 {
+		presetEntry.Capabilities = entry.Capabilities
+	}
+	return presetEntry, nil
 }
 
 func normalizeLLMBackend(backend string, transport string) string {
