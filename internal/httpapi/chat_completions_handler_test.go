@@ -91,6 +91,94 @@ func TestChatCompletionsHandlerCallsProviderOnce(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsHandlerPreservesStructuredContentAndToolFields(t *testing.T) {
+	provider := &fakeProvider{}
+	handler := NewChatCompletionsHandler(
+		slog.Default(),
+		provider,
+		nil,
+		WithProjectConfig(config.ProjectConfig{SystemPrompt: "System prompt"}),
+	)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":[{"type":"text","text":"ping"}]},{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}],"tools":[{"type":"function","function":{"name":"lookup","description":"Look up context","parameters":{"type":"object"}}}],"tool_choice":"auto"}`))
+
+	handler.ServeHTTP(recorder, request)
+
+	if got, want := recorder.Code, http.StatusOK; got != want {
+		t.Fatalf("status = %d, want %d", got, want)
+	}
+	if got, want := provider.called, 1; got != want {
+		t.Fatalf("provider calls = %d, want %d", got, want)
+	}
+
+	var outbound map[string]any
+	if err := json.Unmarshal(provider.body, &outbound); err != nil {
+		t.Fatalf("json.Unmarshal(provider.body) returned error: %v", err)
+	}
+	messages, ok := outbound["messages"].([]any)
+	if !ok {
+		t.Fatalf("messages type = %T, want []any", outbound["messages"])
+	}
+	if got, want := len(messages), 3; got != want {
+		t.Fatalf("messages length = %d, want %d", got, want)
+	}
+	first, ok := messages[0].(map[string]any)
+	if !ok {
+		t.Fatalf("messages[0] type = %T, want map[string]any", messages[0])
+	}
+	if got, want := first["role"], "system"; got != want {
+		t.Fatalf("messages[0].role = %v, want %v", got, want)
+	}
+	if got, want := first["content"], "System prompt"; got != want {
+		t.Fatalf("messages[0].content = %v, want %v", got, want)
+	}
+	second, ok := messages[1].(map[string]any)
+	if !ok {
+		t.Fatalf("messages[1] type = %T, want map[string]any", messages[1])
+	}
+	contentParts, ok := second["content"].([]any)
+	if !ok {
+		t.Fatalf("messages[1].content type = %T, want []any", second["content"])
+	}
+	if got, want := len(contentParts), 1; got != want {
+		t.Fatalf("messages[1].content length = %d, want %d", got, want)
+	}
+	part, ok := contentParts[0].(map[string]any)
+	if !ok {
+		t.Fatalf("messages[1].content[0] type = %T, want map[string]any", contentParts[0])
+	}
+	if got, want := part["type"], "text"; got != want {
+		t.Fatalf("messages[1].content[0].type = %v, want %v", got, want)
+	}
+	if got, want := part["text"], "ping"; got != want {
+		t.Fatalf("messages[1].content[0].text = %v, want %v", got, want)
+	}
+	third, ok := messages[2].(map[string]any)
+	if !ok {
+		t.Fatalf("messages[2] type = %T, want map[string]any", messages[2])
+	}
+	if got := third["content"]; got != nil {
+		t.Fatalf("messages[2].content = %v, want nil", got)
+	}
+	toolCalls, ok := third["tool_calls"].([]any)
+	if !ok {
+		t.Fatalf("messages[2].tool_calls type = %T, want []any", third["tool_calls"])
+	}
+	if got, want := len(toolCalls), 1; got != want {
+		t.Fatalf("messages[2].tool_calls length = %d, want %d", got, want)
+	}
+	if got, want := outbound["tool_choice"], "auto"; got != want {
+		t.Fatalf("tool_choice = %v, want %v", got, want)
+	}
+	tools, ok := outbound["tools"].([]any)
+	if !ok {
+		t.Fatalf("tools type = %T, want []any", outbound["tools"])
+	}
+	if got, want := len(tools), 1; got != want {
+		t.Fatalf("tools length = %d, want %d", got, want)
+	}
+}
+
 func TestChatCompletionsHandlerInjectsProjectPromptSkillsAndInstructions(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", filepath.Join(t.TempDir(), "data"))
 	source := filepath.Join(t.TempDir(), "go-dev.md")

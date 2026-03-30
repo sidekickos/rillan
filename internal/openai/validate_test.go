@@ -35,8 +35,33 @@ func TestValidateChatCompletionRequestRejectsNonStringContent(t *testing.T) {
 		Messages: []Message{{Role: "user", Content: json.RawMessage(`[{"type":"text","text":"hi"}]`)}},
 	}
 
-	if err := ValidateChatCompletionRequest(req); err == nil {
-		t.Fatal("expected error for non-string content")
+	if err := ValidateChatCompletionRequest(req); err != nil {
+		t.Fatalf("ValidateChatCompletionRequest returned error: %v", err)
+	}
+	encoded, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("json.Marshal returned error: %v", err)
+	}
+	if got, want := string(encoded), `{"model":"gpt-4o-mini","messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`; got != want {
+		t.Fatalf("encoded request = %s, want %s", got, want)
+	}
+}
+
+func TestValidateChatCompletionRequestAcceptsAssistantToolCallEnvelope(t *testing.T) {
+	req := ChatCompletionRequest{}
+	if err := json.Unmarshal([]byte(`{"model":"gpt-4o-mini","messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}],"tools":[{"type":"function","function":{"name":"lookup"}}],"tool_choice":"auto"}`), &req); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v", err)
+	}
+
+	if err := ValidateChatCompletionRequest(req); err != nil {
+		t.Fatalf("ValidateChatCompletionRequest returned error: %v", err)
+	}
+	encoded, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("json.Marshal returned error: %v", err)
+	}
+	if got, want := string(encoded), `{"model":"gpt-4o-mini","messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}],"tool_choice":"auto","tools":[{"type":"function","function":{"name":"lookup"}}]}`; got != want {
+		t.Fatalf("encoded request = %s, want %s", got, want)
 	}
 }
 

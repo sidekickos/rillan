@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -20,12 +21,8 @@ func ValidateChatCompletionRequest(req ChatCompletionRequest) error {
 			return fmt.Errorf("messages[%d].role must be one of system, developer, user, assistant, or tool", idx)
 		}
 
-		content, err := MessageText(message)
-		if err != nil {
-			return fmt.Errorf("messages[%d].content must be a string in milestone one", idx)
-		}
-		if strings.TrimSpace(content) == "" {
-			return fmt.Errorf("messages[%d].content must not be empty", idx)
+		if err := validateMessageContent(message); err != nil {
+			return fmt.Errorf("messages[%d].content %w", idx, err)
 		}
 	}
 
@@ -35,6 +32,34 @@ func ValidateChatCompletionRequest(req ChatCompletionRequest) error {
 		}
 		if req.Retrieval.MaxContextChars != nil && *req.Retrieval.MaxContextChars < 1 {
 			return fmt.Errorf("retrieval.max_context_chars must be greater than zero")
+		}
+	}
+
+	return nil
+}
+
+func validateMessageContent(message Message) error {
+	content := bytes.TrimSpace(message.Content)
+	if len(content) == 0 {
+		if message.hasField("tool_calls") {
+			return nil
+		}
+		return fmt.Errorf("must be present")
+	}
+	if !json.Valid(content) {
+		return fmt.Errorf("must be valid JSON")
+	}
+	if bytes.Equal(content, []byte("null")) {
+		if message.hasField("tool_calls") {
+			return nil
+		}
+		return fmt.Errorf("must not be null")
+	}
+
+	var text string
+	if err := json.Unmarshal(content, &text); err == nil {
+		if strings.TrimSpace(text) == "" {
+			return fmt.Errorf("must not be empty")
 		}
 	}
 
