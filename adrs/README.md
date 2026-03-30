@@ -7,3 +7,4 @@ Current ADRs:
 - `ADR-001.md` — OpenAI-compatible upstream as the first real provider path
 - `ADR-002.md` — Localhost bind and local config/data/log defaults for milestone one
 - `ADR-003.md` — One explicit local root, manual indexing, and embedded SQLite storage for milestone two
+- `ADR-004.md` — Plugin architecture for community extensibility
