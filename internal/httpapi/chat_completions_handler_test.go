@@ -155,6 +155,59 @@ func TestChatCompletionsHandlerRoutesTaskTypePreferenceToLocalCandidate(t *testi
 	}
 }
 
+func TestChatCompletionsHandlerUsesLatestRuntimeSnapshot(t *testing.T) {
+	remote := &fakeProvider{}
+	local := &fakeProvider{}
+	current := RuntimeSnapshot{
+		Provider:      remote,
+		ProviderHost:  fakeProviderHost{providers: map[string]providers.Provider{"remote-gpt": remote, "local-qwen": local}},
+		ProjectConfig: config.DefaultProjectConfig(),
+		RouteCatalog: routing.Catalog{Candidates: []routing.Candidate{
+			{ID: "remote-gpt", Location: routing.LocationRemote, Capabilities: []string{"chat"}},
+			{ID: "local-qwen", Location: routing.LocationLocal, Capabilities: []string{"chat"}},
+		}},
+		RouteStatus: routing.StatusCatalog{Candidates: []routing.CandidateStatus{
+			{Candidate: routing.Candidate{ID: "remote-gpt", Location: routing.LocationRemote, Capabilities: []string{"chat"}}, Available: true},
+			{Candidate: routing.Candidate{ID: "local-qwen", Location: routing.LocationLocal, Capabilities: []string{"chat"}}, Available: false},
+		}},
+	}
+	handler := NewChatCompletionsHandler(slog.Default(), remote, nil, WithRuntimeSnapshot(func() RuntimeSnapshot {
+		return current
+	}))
+
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}`)))
+	if got, want := first.Code, http.StatusOK; got != want {
+		t.Fatalf("first status = %d, want %d", got, want)
+	}
+	if got, want := remote.called, 1; got != want {
+		t.Fatalf("remote provider calls after first request = %d, want %d", got, want)
+	}
+
+	current = RuntimeSnapshot{
+		Provider:      local,
+		ProviderHost:  fakeProviderHost{providers: map[string]providers.Provider{"remote-gpt": remote, "local-qwen": local}},
+		ProjectConfig: config.DefaultProjectConfig(),
+		RouteCatalog: routing.Catalog{Candidates: []routing.Candidate{
+			{ID: "remote-gpt", Location: routing.LocationRemote, Capabilities: []string{"chat"}},
+			{ID: "local-qwen", Location: routing.LocationLocal, Capabilities: []string{"chat"}},
+		}},
+		RouteStatus: routing.StatusCatalog{Candidates: []routing.CandidateStatus{
+			{Candidate: routing.Candidate{ID: "remote-gpt", Location: routing.LocationRemote, Capabilities: []string{"chat"}}, Available: false},
+			{Candidate: routing.Candidate{ID: "local-qwen", Location: routing.LocationLocal, Capabilities: []string{"chat"}}, Available: true},
+		}},
+	}
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}`)))
+	if got, want := second.Code, http.StatusOK; got != want {
+		t.Fatalf("second status = %d, want %d", got, want)
+	}
+	if got, want := local.called, 1; got != want {
+		t.Fatalf("local provider calls after refresh = %d, want %d", got, want)
+	}
+}
+
 func TestChatCompletionsHandlerPreservesStructuredContentAndToolFields(t *testing.T) {
 	provider := &fakeProvider{}
 	handler := NewChatCompletionsHandler(

@@ -33,6 +33,7 @@ type ChatCompletionsHandler struct {
 	provider     providers.Provider
 	providerHost providerHost
 	pipeline     *retrieval.Pipeline
+	runtime      RuntimeSnapshotFunc
 	project      config.ProjectConfig
 	system       *config.SystemConfig
 	audit        audit.Recorder
@@ -116,6 +117,12 @@ func WithClassifier(classifier classify.Classifier) ChatCompletionsHandlerOption
 	}
 }
 
+func WithRuntimeSnapshot(runtime RuntimeSnapshotFunc) ChatCompletionsHandlerOption {
+	return func(handler *ChatCompletionsHandler) {
+		handler.runtime = runtime
+	}
+}
+
 func WithProviderHost(host providerHost) ChatCompletionsHandlerOption {
 	return func(handler *ChatCompletionsHandler) {
 		handler.providerHost = host
@@ -134,11 +141,50 @@ func WithRouteStatus(status routing.StatusCatalog) ChatCompletionsHandlerOption 
 	}
 }
 
+type chatRuntime struct {
+	provider     providers.Provider
+	providerHost providerHost
+	pipeline     *retrieval.Pipeline
+	project      config.ProjectConfig
+	system       *config.SystemConfig
+	classifier   classify.Classifier
+	routeCatalog routing.Catalog
+	routeStatus  routing.StatusCatalog
+}
+
+func (h *ChatCompletionsHandler) currentRuntime() chatRuntime {
+	runtime := chatRuntime{
+		provider:     h.provider,
+		providerHost: h.providerHost,
+		pipeline:     h.pipeline,
+		project:      h.project,
+		system:       h.system,
+		classifier:   h.classifier,
+		routeCatalog: h.routeCatalog,
+		routeStatus:  h.routeStatus,
+	}
+	if h.runtime == nil {
+		return runtime
+	}
+
+	snapshot := h.runtime()
+	runtime.provider = snapshot.Provider
+	runtime.providerHost = snapshot.ProviderHost
+	runtime.pipeline = snapshot.Pipeline
+	runtime.project = snapshot.ProjectConfig
+	runtime.system = snapshot.SystemConfig
+	runtime.classifier = snapshot.Classifier
+	runtime.routeCatalog = snapshot.RouteCatalog
+	runtime.routeStatus = snapshot.RouteStatus
+	return runtime
+}
+
 func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		internalopenai.WriteError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method must be POST")
 		return
 	}
+	runtime := h.currentRuntime()
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
 	if err != nil {
@@ -156,7 +202,7 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		internalopenai.WriteError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
 	}
-	request, err = applyProjectPromptContext(request, h.project)
+	request, err = applyProjectPromptContext(request, runtime.project)
 	if err != nil {
 		h.logger.Error("project prompt composition failed", "request_id", RequestIDFromContext(r.Context()), "error", err.Error())
 		internalopenai.WriteError(w, http.StatusInternalServerError, "config_error", "project prompt composition failed")
@@ -171,16 +217,16 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 
 	outboundRequest := request
 	outboundBody := body
-	runtimePolicy := policy.MergeRuntimePolicy(h.system, h.project)
+	runtimePolicy := policy.MergeRuntimePolicy(runtime.system, runtime.project)
 	var classification *policy.IntentClassification
-	if h.classifier != nil {
-		classification, err = h.classifier.Classify(r.Context(), request)
+	if runtime.classifier != nil {
+		classification, err = runtime.classifier.Classify(r.Context(), request)
 		if err != nil {
-			h.logger.Warn("intent classification failed", "request_id", RequestIDFromContext(r.Context()), "provider", h.provider.Name(), "error", err.Error())
+			h.logger.Warn("intent classification failed", "request_id", RequestIDFromContext(r.Context()), "provider", runtime.provider.Name(), "error", err.Error())
 		}
 	}
 	preflight, err := h.evaluator.Evaluate(r.Context(), policy.EvaluationInput{
-		Project:        h.project,
+		Project:        runtime.project,
 		Runtime:        runtimePolicy,
 		Request:        request,
 		Body:           body,
@@ -189,7 +235,7 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		Phase:          policy.EvaluationPhasePreflight,
 	})
 	if err != nil {
-		h.logger.Error("policy preflight failed", "request_id", RequestIDFromContext(r.Context()), "provider", h.provider.Name(), "error", err.Error())
+		h.logger.Error("policy preflight failed", "request_id", RequestIDFromContext(r.Context()), "provider", runtime.provider.Name(), "error", err.Error())
 		internalopenai.WriteError(w, http.StatusInternalServerError, "policy_error", "policy preflight failed")
 		return
 	}
@@ -208,7 +254,7 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		internalopenai.WriteError(w, http.StatusForbidden, "policy_violation", "outbound request blocked by policy")
 		return
 	}
-	routeSelection, err := h.resolveRoute(request.Model, internalopenai.RequiredCapabilities(request), preflight.Verdict, classification)
+	routeSelection, err := h.resolveRoute(runtime, request.Model, internalopenai.RequiredCapabilities(request), preflight.Verdict, classification)
 	h.logRouteDecision(r.Context(), routeSelection)
 	if err != nil {
 		if preflight.Verdict == policy.VerdictLocalOnly {
@@ -230,8 +276,8 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	requestForPreparation := request
-	if h.pipeline != nil {
-		settings, settingsErr := h.pipeline.ResolveSettings(request)
+	if runtime.pipeline != nil {
+		settings, settingsErr := runtime.pipeline.ResolveSettings(request)
 		if settingsErr != nil {
 			internalopenai.WriteError(w, http.StatusBadRequest, "invalid_request_error", settingsErr.Error())
 			return
@@ -241,8 +287,8 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	if h.pipeline != nil && h.pipeline.NeedsPreparation(requestForPreparation) {
-		outboundRequest, outboundBody, err = h.pipeline.Prepare(r.Context(), requestForPreparation)
+	if runtime.pipeline != nil && runtime.pipeline.NeedsPreparation(requestForPreparation) {
+		outboundRequest, outboundBody, err = runtime.pipeline.Prepare(r.Context(), requestForPreparation)
 		if err != nil {
 			h.logger.Error("retrieval preparation failed", "request_id", RequestIDFromContext(r.Context()), "error", err.Error())
 			internalopenai.WriteError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
@@ -264,7 +310,7 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 
 	scanResult := h.scanner.Scan(outboundBody)
 	evaluation, err := h.evaluator.Evaluate(r.Context(), policy.EvaluationInput{
-		Project:        h.project,
+		Project:        runtime.project,
 		Runtime:        runtimePolicy,
 		Request:        outboundRequest,
 		Body:           outboundBody,
@@ -379,12 +425,12 @@ func (s chatRouteSelection) IsRemote() bool {
 	return s.Candidate == nil || s.Candidate.Location == routing.LocationRemote
 }
 
-func (h *ChatCompletionsHandler) resolveRoute(requestedModel string, requiredCapabilities []string, verdict policy.Verdict, classification *policy.IntentClassification) (chatRouteSelection, error) {
-	if h.providerHost == nil {
+func (h *ChatCompletionsHandler) resolveRoute(runtime chatRuntime, requestedModel string, requiredCapabilities []string, verdict policy.Verdict, classification *policy.IntentClassification) (chatRouteSelection, error) {
+	if runtime.providerHost == nil {
 		if verdict == policy.VerdictLocalOnly {
-			return chatRouteSelection{Provider: h.provider, ProviderID: h.provider.Name()}, fmt.Errorf("no local runtime provider available")
+			return chatRouteSelection{Provider: runtime.provider, ProviderID: runtime.provider.Name()}, fmt.Errorf("no local runtime provider available")
 		}
-		return chatRouteSelection{Provider: h.provider, ProviderID: h.provider.Name()}, nil
+		return chatRouteSelection{Provider: runtime.provider, ProviderID: runtime.provider.Name()}, nil
 	}
 
 	action := policy.ActionTypeGeneralQA
@@ -395,16 +441,16 @@ func (h *ChatCompletionsHandler) resolveRoute(requestedModel string, requiredCap
 		RequestedModel:       requestedModel,
 		RequiredCapabilities: requiredCapabilities,
 		Action:               action,
-		Project:              h.project,
+		Project:              runtime.project,
 		PolicyVerdict:        verdict,
-		Candidates:           h.availableRouteCandidates(),
+		Candidates:           h.availableRouteCandidates(runtime),
 	})
 	selection := chatRouteSelection{Decision: &decision}
 	if decision.Selected == nil {
 		return selection, fmt.Errorf("no eligible runtime provider available")
 	}
 
-	provider, err := h.providerHost.Provider(decision.Selected.ID)
+	provider, err := runtime.providerHost.Provider(decision.Selected.ID)
 	if err != nil {
 		return selection, err
 	}
@@ -415,15 +461,15 @@ func (h *ChatCompletionsHandler) resolveRoute(requestedModel string, requiredCap
 	return selection, nil
 }
 
-func (h *ChatCompletionsHandler) availableRouteCandidates() []routing.Candidate {
-	if len(h.routeStatus.Candidates) > 0 {
-		candidates := make([]routing.Candidate, 0, len(h.routeStatus.Candidates))
-		for _, status := range h.routeStatus.Candidates {
+func (h *ChatCompletionsHandler) availableRouteCandidates(runtime chatRuntime) []routing.Candidate {
+	if len(runtime.routeStatus.Candidates) > 0 {
+		candidates := make([]routing.Candidate, 0, len(runtime.routeStatus.Candidates))
+		for _, status := range runtime.routeStatus.Candidates {
 			if !status.Available {
 				continue
 			}
-			if h.providerHost != nil {
-				if _, err := h.providerHost.Provider(status.Candidate.ID); err != nil {
+			if runtime.providerHost != nil {
+				if _, err := runtime.providerHost.Provider(status.Candidate.ID); err != nil {
 					continue
 				}
 			}
@@ -432,16 +478,16 @@ func (h *ChatCompletionsHandler) availableRouteCandidates() []routing.Candidate 
 		return candidates
 	}
 
-	if len(h.routeCatalog.Candidates) == 0 {
+	if len(runtime.routeCatalog.Candidates) == 0 {
 		return nil
 	}
-	if h.providerHost == nil {
-		return append([]routing.Candidate(nil), h.routeCatalog.Candidates...)
+	if runtime.providerHost == nil {
+		return append([]routing.Candidate(nil), runtime.routeCatalog.Candidates...)
 	}
 
-	candidates := make([]routing.Candidate, 0, len(h.routeCatalog.Candidates))
-	for _, candidate := range h.routeCatalog.Candidates {
-		if _, err := h.providerHost.Provider(candidate.ID); err != nil {
+	candidates := make([]routing.Candidate, 0, len(runtime.routeCatalog.Candidates))
+	for _, candidate := range runtime.routeCatalog.Candidates {
+		if _, err := runtime.providerHost.Provider(candidate.ID); err != nil {
 			continue
 		}
 		candidates = append(candidates, candidate)
