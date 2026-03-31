@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	internalopenai "github.com/sidekickos/rillan/internal/openai"
 )
@@ -20,6 +21,8 @@ type ReadinessInfo struct {
 	ModulesDiscovered  int
 	ModulesEnabled     int
 }
+
+const readinessCheckTimeout = 3 * time.Second
 
 func HealthHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -45,11 +48,6 @@ func serveReadyResponse(w http.ResponseWriter, r *http.Request, checker readines
 		return
 	}
 
-	if err := checker.Ready(r.Context()); err != nil {
-		internalopenai.WriteError(w, http.StatusServiceUnavailable, "service_unavailable", err.Error())
-		return
-	}
-
 	resp := map[string]any{
 		"status": "ready",
 		"runtime": map[string]any{
@@ -61,8 +59,21 @@ func serveReadyResponse(w http.ResponseWriter, r *http.Request, checker readines
 			"modules_enabled":      info.ModulesEnabled,
 		},
 	}
+
+	readyCtx, cancel := context.WithTimeout(r.Context(), readinessCheckTimeout)
+	defer cancel()
+	if err := checker.Ready(readyCtx); err != nil {
+		resp["status"] = "degraded"
+		resp["provider"] = map[string]string{"status": "unavailable", "error": err.Error()}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(resp)
+		return
+	}
 	if ollamaChecker != nil {
-		if err := ollamaChecker(r.Context()); err != nil {
+		ollamaCtx, cancel := context.WithTimeout(r.Context(), readinessCheckTimeout)
+		defer cancel()
+		if err := ollamaChecker(ollamaCtx); err != nil {
 			resp["local_model"] = map[string]string{"status": "unavailable", "error": err.Error()}
 			if info.LocalModelRequired {
 				resp["status"] = "degraded"

@@ -40,7 +40,7 @@ func TestSharedRunnerRecordsSkillLatency(t *testing.T) {
 	if err := os.WriteFile(path, []byte("agent skills can read repo files"), 0o644); err != nil {
 		t.Fatalf("WriteFile returned error: %v", err)
 	}
-	runner := NewRunner()
+	runner := NewRunner([]string{repo})
 	profiles := DefaultRoleProfiles()
 	pkg := ContextPackage{
 		Task:             TaskSection{Goal: "inspect repo", ExecutionMode: string(policy.ExecutionModeDirect)},

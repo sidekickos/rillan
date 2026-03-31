@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sidekickos/rillan/internal/chat"
 	"github.com/sidekickos/rillan/internal/httpapi"
-	internalopenai "github.com/sidekickos/rillan/internal/openai"
 )
 
 type managerTestProvider struct {
@@ -21,7 +21,7 @@ func (p managerTestProvider) Name() string { return p.name }
 
 func (p managerTestProvider) Ready(context.Context) error { return nil }
 
-func (p managerTestProvider) ChatCompletions(context.Context, internalopenai.ChatCompletionRequest, []byte) (*http.Response, error) {
+func (p managerTestProvider) ChatCompletions(context.Context, chat.ProviderRequest) (*http.Response, error) {
 	return nil, nil
 }
 

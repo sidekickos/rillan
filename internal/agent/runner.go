@@ -24,8 +24,8 @@ type RunResult struct {
 	ContextEcho  ContextPackage         `json:"context_echo"`
 }
 
-func NewRunner() *SharedRunner {
-	return &SharedRunner{tools: NewReadOnlyToolRuntime()}
+func NewRunner(approvedRepoRoots []string) *SharedRunner {
+	return &SharedRunner{tools: NewReadOnlyToolRuntime(approvedRepoRoots)}
 }
 
 func (r *SharedRunner) Run(ctx context.Context, profile RoleProfile, pkg ContextPackage) (RunResult, error) {

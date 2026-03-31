@@ -2,35 +2,24 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
 	"github.com/sidekickos/rillan/internal/agent"
+	skilltools "github.com/sidekickos/rillan/internal/agent/skills"
 	internalopenai "github.com/sidekickos/rillan/internal/openai"
 )
 
-type AgentTaskRequest struct {
-	Goal             string                  `json:"goal"`
-	ExecutionMode    string                  `json:"execution_mode,omitempty"`
-	CurrentStep      string                  `json:"current_step,omitempty"`
-	RepoRoot         string                  `json:"repo_root,omitempty"`
-	SkillInvocations []agent.SkillInvocation `json:"skill_invocations,omitempty"`
-	MCPSnapshot      *agent.MCPSnapshot      `json:"mcp_snapshot,omitempty"`
-	ProposedAction   *agent.ActionRequest    `json:"proposed_action,omitempty"`
-}
-
-type AgentTaskResponse struct {
-	Result   agent.RunResult       `json:"result"`
-	Proposal *agent.ActionProposal `json:"proposal,omitempty"`
-}
-
 type AgentTaskHandler struct {
-	logger *slog.Logger
-	runner agent.Runner
-	gate   *agent.ApprovalGate
+	logger            *slog.Logger
+	runner            agent.Runner
+	gate              *agent.ApprovalGate
+	runtimeSnapshot   RuntimeSnapshotFunc
+	approvedRepoRoots []string
 }
 
-func NewAgentTaskHandler(logger *slog.Logger, gate *agent.ApprovalGate) *AgentTaskHandler {
+func NewAgentTaskHandler(logger *slog.Logger, gate *agent.ApprovalGate, runtimeSnapshot RuntimeSnapshotFunc, approvedRepoRoots []string) *AgentTaskHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -38,10 +27,23 @@ func NewAgentTaskHandler(logger *slog.Logger, gate *agent.ApprovalGate) *AgentTa
 		gate = agent.NewApprovalGate(nil)
 	}
 	return &AgentTaskHandler{
-		logger: logger,
-		runner: agent.NewRunner(),
-		gate:   gate,
+		logger:            logger,
+		runner:            agent.NewRunner(approvedRepoRoots),
+		gate:              gate,
+		runtimeSnapshot:   runtimeSnapshot,
+		approvedRepoRoots: append([]string(nil), approvedRepoRoots...),
 	}
+}
+
+func (h *AgentTaskHandler) currentApprovedRepoRoots() []string {
+	if h.runtimeSnapshot == nil {
+		return append([]string(nil), h.approvedRepoRoots...)
+	}
+	snapshot := h.runtimeSnapshot()
+	if snapshot.Config.Server.Host == "" {
+		return append([]string(nil), h.approvedRepoRoots...)
+	}
+	return buildApprovedRepoRoots(snapshot.Config)
 }
 
 func (h *AgentTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +61,26 @@ func (h *AgentTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		internalopenai.WriteError(w, http.StatusBadRequest, "invalid_request_error", "goal must not be empty")
 		return
 	}
+	approvedRepoRoots := h.currentApprovedRepoRoots()
+	if req.RepoRoot != "" {
+		resolvedRoot, err := skilltools.ResolveApprovedRepoRoot(req.RepoRoot, approvedRepoRoots)
+		if err != nil {
+			writeAgentTaskRequestError(w, err)
+			return
+		}
+		req.RepoRoot = resolvedRoot
+	}
+	for i := range req.SkillInvocations {
+		if req.SkillInvocations[i].RepoRoot == "" {
+			continue
+		}
+		resolvedRoot, err := skilltools.ResolveApprovedRepoRoot(req.SkillInvocations[i].RepoRoot, approvedRepoRoots)
+		if err != nil {
+			writeAgentTaskRequestError(w, err)
+			return
+		}
+		req.SkillInvocations[i].RepoRoot = resolvedRoot
+	}
 
 	pkg := agent.BuildContextPackage(agent.BuildInput{
 		Goal:             req.Goal,
@@ -68,30 +90,40 @@ func (h *AgentTaskHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ApprovalRequired: true,
 		AllowedEffects:   []string{"read", "propose_write", "propose_execute"},
 		ForbiddenEffects: []string{"write", "execute"},
-		SkillInvocations: req.SkillInvocations,
-		MCPSnapshot:      req.MCPSnapshot,
+		SkillInvocations: toAgentSkillInvocations(req.SkillInvocations),
+		MCPSnapshot:      toAgentMCPSnapshot(req.MCPSnapshot),
 		OutputKind:       "agent_task_response",
 		OutputNote:       "Return orchestration result and optional proposal.",
 		Budget:           agent.BudgetSection{MaxEvidenceItems: 8, MaxFacts: 8, MaxOpenQuestions: 4, MaxWorkingMemoryItems: 4, MaxItemChars: 240},
 	})
 	result, err := h.runner.Run(r.Context(), agent.DefaultRoleProfiles()[agent.RoleOrchestrator], pkg)
 	if err != nil {
+		if errors.Is(err, skilltools.ErrUnapprovedRepoRoot) {
+			internalopenai.WriteError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
 		internalopenai.WriteError(w, http.StatusInternalServerError, "runtime_error", err.Error())
 		return
 	}
 
-	response := AgentTaskResponse{Result: result}
+	response := AgentTaskResponse{Result: fromAgentRunResult(result)}
 	if req.ProposedAction != nil {
-		proposal, err := h.gate.Propose(r.Context(), RequestIDFromContext(r.Context()), *req.ProposedAction)
+		proposalRequest := toAgentActionRequest(req.ProposedAction)
+		proposal, err := h.gate.Propose(r.Context(), RequestIDFromContext(r.Context()), *proposalRequest)
 		if err != nil {
 			internalopenai.WriteError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 			return
 		}
-		response.Proposal = &proposal
+		transportProposal := fromAgentActionProposal(proposal)
+		response.Proposal = &transportProposal
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(response)
 	h.logger.Info("agent task processed", "request_id", RequestIDFromContext(r.Context()), "goal", req.Goal, "proposal", response.Proposal != nil)
+}
+
+func writeAgentTaskRequestError(w http.ResponseWriter, err error) {
+	internalopenai.WriteError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
 }

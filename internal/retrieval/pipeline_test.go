@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sidekickos/rillan/internal/chat"
 	"github.com/sidekickos/rillan/internal/config"
 	"github.com/sidekickos/rillan/internal/index"
-	internalopenai "github.com/sidekickos/rillan/internal/openai"
 )
 
 func TestResolveSettingsRequestOverrideWins(t *testing.T) {
@@ -17,7 +17,7 @@ func TestResolveSettingsRequestOverrideWins(t *testing.T) {
 	overrideTopK := 2
 	defaults := config.RetrievalConfig{Enabled: true, TopK: 7, MaxContextChars: 500}
 
-	settings, err := ResolveSettings(defaults, &internalopenai.RetrievalOptions{Enabled: &falseValue, TopK: &overrideTopK})
+	settings, err := ResolveSettings(defaults, &chat.RetrievalOptions{Enabled: &falseValue, TopK: &overrideTopK})
 	if err != nil {
 		t.Fatalf("ResolveSettings returned error: %v", err)
 	}
@@ -72,9 +72,9 @@ func TestPrepareAddsCompiledContextAndSanitizesRequest(t *testing.T) {
 	}})
 
 	pipeline := NewPipeline(config.RetrievalConfig{Enabled: true, TopK: 1, MaxContextChars: 400}, dbPath)
-	req := internalopenai.ChatCompletionRequest{
+	req := chat.Request{
 		Model: "gpt-4o-mini",
-		Messages: []internalopenai.Message{{
+		Messages: []chat.Message{{
 			Role:    "user",
 			Content: mustMarshalString(t, "how does local retrieval work?"),
 		}},
@@ -90,7 +90,7 @@ func TestPrepareAddsCompiledContextAndSanitizesRequest(t *testing.T) {
 	if len(sanitized.Messages) != 2 {
 		t.Fatalf("messages = %d, want 2", len(sanitized.Messages))
 	}
-	contextMessage, err := internalopenai.MessageText(sanitized.Messages[0])
+	contextMessage, err := chat.MessageText(sanitized.Messages[0])
 	if err != nil {
 		t.Fatalf("MessageText returned error: %v", err)
 	}
@@ -133,9 +133,9 @@ func TestPrepareFallsBackToPlaceholderEmbeddingWhenPrimaryEmbedderFails(t *testi
 			PlaceholderEmbedder{},
 		)),
 	)
-	req := internalopenai.ChatCompletionRequest{
+	req := chat.Request{
 		Model: "gpt-4o-mini",
-		Messages: []internalopenai.Message{{
+		Messages: []chat.Message{{
 			Role:    "user",
 			Content: mustMarshalString(t, "how does local retrieval work?"),
 		}},
@@ -148,7 +148,7 @@ func TestPrepareFallsBackToPlaceholderEmbeddingWhenPrimaryEmbedderFails(t *testi
 	if len(sanitized.Messages) != 2 {
 		t.Fatalf("messages = %d, want 2", len(sanitized.Messages))
 	}
-	contextMessage, err := internalopenai.MessageText(sanitized.Messages[0])
+	contextMessage, err := chat.MessageText(sanitized.Messages[0])
 	if err != nil {
 		t.Fatalf("MessageText returned error: %v", err)
 	}
@@ -174,9 +174,9 @@ func TestPrepareUsesKeywordSearchWhenEmbeddingUnavailable(t *testing.T) {
 		dbPath,
 		WithQueryEmbedder(failingQueryEmbedder{err: context.DeadlineExceeded}),
 	)
-	req := internalopenai.ChatCompletionRequest{
+	req := chat.Request{
 		Model: "gpt-4o-mini",
-		Messages: []internalopenai.Message{{
+		Messages: []chat.Message{{
 			Role:    "user",
 			Content: mustMarshalString(t, "how does local retrieval work?"),
 		}},
@@ -189,7 +189,7 @@ func TestPrepareUsesKeywordSearchWhenEmbeddingUnavailable(t *testing.T) {
 	if len(sanitized.Messages) != 2 {
 		t.Fatalf("messages = %d, want 2", len(sanitized.Messages))
 	}
-	contextMessage, err := internalopenai.MessageText(sanitized.Messages[0])
+	contextMessage, err := chat.MessageText(sanitized.Messages[0])
 	if err != nil {
 		t.Fatalf("MessageText returned error: %v", err)
 	}

@@ -4,6 +4,11 @@ server:
   host: "127.0.0.1"
   port: 8420
   log_level: "info"
+  allow_non_loopback_bind: false
+  auth:
+    enabled: false
+    auth_strategy: "api_key"
+    session_ref: "keyring://rillan/auth/daemon"
 
 auth:
   rillan:
@@ -66,6 +71,7 @@ runtime:
 
 agent:
   enabled: false
+  approved_repo_roots: []
   mcp:
     enabled: false
     read_only: true

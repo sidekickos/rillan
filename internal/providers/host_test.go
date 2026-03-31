@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/sidekickos/rillan/internal/chat"
 	"github.com/sidekickos/rillan/internal/config"
 	internalopenai "github.com/sidekickos/rillan/internal/openai"
 )
@@ -61,7 +62,7 @@ func TestNewHostDefaultProviderUsesOpenAIAdapter(t *testing.T) {
 		t.Fatalf("DefaultProvider returned error: %v", err)
 	}
 
-	response, err := provider.ChatCompletions(context.Background(), internalopenai.ChatCompletionRequest{Model: "gpt-4o-mini"}, []byte(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}`))
+	response, err := provider.ChatCompletions(context.Background(), chat.ProviderRequest{Request: internalopenai.ChatCompletionRequest{Model: "gpt-4o-mini"}, RawBody: []byte(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}`)})
 	if err != nil {
 		t.Fatalf("ChatCompletions returned error: %v", err)
 	}
@@ -165,7 +166,7 @@ func TestNewHostSupportsOpenAICompatibleBundledPresets(t *testing.T) {
 				t.Fatalf("DefaultProvider returned error: %v", err)
 			}
 
-			response, err := provider.ChatCompletions(context.Background(), internalopenai.ChatCompletionRequest{Model: "test-model"}, []byte(`{"model":"test-model","messages":[{"role":"user","content":"ping"}]}`))
+			response, err := provider.ChatCompletions(context.Background(), chat.ProviderRequest{Request: internalopenai.ChatCompletionRequest{Model: "test-model"}, RawBody: []byte(`{"model":"test-model","messages":[{"role":"user","content":"ping"}]}`)})
 			if err != nil {
 				t.Fatalf("ChatCompletions returned error: %v", err)
 			}
@@ -226,10 +227,10 @@ func TestNewHostSupportsAnthropicBundledPreset(t *testing.T) {
 		t.Fatalf("DefaultProvider returned error: %v", err)
 	}
 
-	response, err := provider.ChatCompletions(context.Background(), internalopenai.ChatCompletionRequest{
+	response, err := provider.ChatCompletions(context.Background(), chat.ProviderRequest{Request: internalopenai.ChatCompletionRequest{
 		Model:    "claude-sonnet-4-5",
 		Messages: []internalopenai.Message{{Role: "user", Content: []byte(`"ping"`)}},
-	}, []byte(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"ping"}]}`))
+	}, RawBody: []byte(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"ping"}]}`)})
 	if err != nil {
 		t.Fatalf("ChatCompletions returned error: %v", err)
 	}
@@ -294,13 +295,13 @@ func TestNewHostSupportsInternalOllamaProvider(t *testing.T) {
 		t.Fatalf("DefaultProvider returned error: %v", err)
 	}
 
-	response, err := provider.ChatCompletions(context.Background(), internalopenai.ChatCompletionRequest{
+	response, err := provider.ChatCompletions(context.Background(), chat.ProviderRequest{Request: internalopenai.ChatCompletionRequest{
 		Model: "qwen3:8b",
 		Messages: []internalopenai.Message{
 			{Role: "system", Content: []byte(`"stay concise"`)},
 			{Role: "user", Content: []byte(`"ping"`)},
 		},
-	}, nil)
+	}})
 	if err != nil {
 		t.Fatalf("ChatCompletions returned error: %v", err)
 	}

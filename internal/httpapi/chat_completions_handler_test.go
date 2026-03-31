@@ -18,6 +18,7 @@ import (
 
 	"github.com/sidekickos/rillan/internal/agent"
 	"github.com/sidekickos/rillan/internal/audit"
+	"github.com/sidekickos/rillan/internal/chat"
 	"github.com/sidekickos/rillan/internal/config"
 	"github.com/sidekickos/rillan/internal/index"
 	internalopenai "github.com/sidekickos/rillan/internal/openai"
@@ -37,10 +38,10 @@ type fakeProvider struct {
 
 func (f *fakeProvider) Name() string                { return "fake" }
 func (f *fakeProvider) Ready(context.Context) error { return nil }
-func (f *fakeProvider) ChatCompletions(_ context.Context, req internalopenai.ChatCompletionRequest, body []byte) (*http.Response, error) {
+func (f *fakeProvider) ChatCompletions(_ context.Context, req chat.ProviderRequest) (*http.Response, error) {
 	f.called++
-	f.request = req
-	f.body = append([]byte(nil), body...)
+	f.request = req.Request
+	f.body = append([]byte(nil), req.RawBody...)
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -719,8 +720,44 @@ func TestChatCompletionsHandlerRecordsRemoteEgressAuditEvent(t *testing.T) {
 	if events[0].OutboundSHA256 == "" {
 		t.Fatal("expected outbound hash to be recorded")
 	}
+	if got, want := events[0].ResponseStatus, http.StatusOK; got != want {
+		t.Fatalf("response status = %d, want %d", got, want)
+	}
+	if got, want := events[0].ResponseSHA256, audit.HashBytes([]byte(`{"id":"ok"}`)); got != want {
+		t.Fatalf("response hash = %q, want %q", got, want)
+	}
 	if strings.Contains(events[0].OutboundSHA256, "ping") {
 		t.Fatal("outbound hash should not contain raw payload")
+	}
+}
+
+func TestChatCompletionsHandlerRecordsRemoteEgressAuditErrorEvent(t *testing.T) {
+	store, err := audit.NewStore(filepath.Join(t.TempDir(), "audit", "ledger.jsonl"))
+	if err != nil {
+		t.Fatalf("NewStore returned error: %v", err)
+	}
+
+	provider := &fakeProvider{err: errors.New("upstream offline")}
+	handler := NewChatCompletionsHandler(
+		slog.Default(),
+		provider,
+		nil,
+		WithAuditRecorder(store),
+	)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ping"}]}`))
+
+	handler.ServeHTTP(recorder, request)
+
+	events, err := store.ReadAll(context.Background())
+	if err != nil {
+		t.Fatalf("ReadAll returned error: %v", err)
+	}
+	if got, want := len(events), 1; got != want {
+		t.Fatalf("events = %d, want %d", got, want)
+	}
+	if got := events[0].Error; got == "" {
+		t.Fatal("expected upstream error to be recorded")
 	}
 }
 

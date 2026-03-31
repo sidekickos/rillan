@@ -6,18 +6,23 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/sidekickos/rillan/internal/chat"
 	"github.com/sidekickos/rillan/internal/config"
-	internalopenai "github.com/sidekickos/rillan/internal/openai"
 	provideranthropic "github.com/sidekickos/rillan/internal/providers/anthropic"
 	providerollama "github.com/sidekickos/rillan/internal/providers/ollama"
 	provideropenai "github.com/sidekickos/rillan/internal/providers/openai"
 	providerstdio "github.com/sidekickos/rillan/internal/providers/stdio"
 )
 
+type ChatRequest struct {
+	Request chat.Request
+	RawBody []byte
+}
+
 type Provider interface {
 	Name() string
 	Ready(context.Context) error
-	ChatCompletions(context.Context, internalopenai.ChatCompletionRequest, []byte) (*http.Response, error)
+	ChatCompletions(context.Context, chat.ProviderRequest) (*http.Response, error)
 }
 
 func New(cfg config.ProviderConfig, client *http.Client) (Provider, error) {

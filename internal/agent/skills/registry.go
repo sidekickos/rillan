@@ -18,10 +18,12 @@ const (
 	defaultMaxGitDiffChars = 4000
 )
 
-type Registry struct{}
+type Registry struct {
+	approvedRepoRoots []string
+}
 
-func NewRegistry() *Registry {
-	return &Registry{}
+func NewRegistry(approvedRepoRoots []string) *Registry {
+	return &Registry{approvedRepoRoots: append([]string(nil), approvedRepoRoots...)}
 }
 
 func (r *Registry) ReadFiles(ctx context.Context, req ReadFilesRequest) (ReadFilesResult, error) {
@@ -29,9 +31,13 @@ func (r *Registry) ReadFiles(ctx context.Context, req ReadFilesRequest) (ReadFil
 	if err != nil {
 		return ReadFilesResult{}, err
 	}
+	approvedRoot, err := ResolveApprovedRepoRoot(req.RepoRoot, r.approvedRepoRoots)
+	if err != nil {
+		return ReadFilesResult{}, err
+	}
 	files := make([]FileContent, 0, len(paths))
 	for _, path := range paths {
-		content, err := readFileBounded(ctx, req.RepoRoot, path, maxChars)
+		content, err := readFileBounded(ctx, approvedRoot, path, maxChars)
 		if err != nil {
 			return ReadFilesResult{}, err
 		}
@@ -49,7 +55,11 @@ func (r *Registry) SearchRepo(ctx context.Context, req SearchRepoRequest) (Searc
 	if strings.TrimSpace(req.Query) == "" {
 		return SearchRepoResult{}, fmt.Errorf("search_repo.query must not be empty")
 	}
-	results, err := searchRepoBounded(ctx, req.RepoRoot, req.Query, maxMatches, maxSnippetChars)
+	approvedRoot, err := ResolveApprovedRepoRoot(req.RepoRoot, r.approvedRepoRoots)
+	if err != nil {
+		return SearchRepoResult{}, err
+	}
+	results, err := searchRepoBounded(ctx, approvedRoot, req.Query, maxMatches, maxSnippetChars)
 	if err != nil {
 		return SearchRepoResult{}, err
 	}
@@ -91,7 +101,11 @@ func (r *Registry) GitStatus(ctx context.Context, req GitStatusRequest) (GitStat
 	if strings.TrimSpace(req.RepoRoot) == "" {
 		return GitStatusResult{}, fmt.Errorf("git_status.repo_root must not be empty")
 	}
-	output, err := runGit(ctx, req.RepoRoot, "status", "--short")
+	approvedRoot, err := ResolveApprovedRepoRoot(req.RepoRoot, r.approvedRepoRoots)
+	if err != nil {
+		return GitStatusResult{}, err
+	}
+	output, err := runGit(ctx, approvedRoot, "status", "--short")
 	if err != nil {
 		return GitStatusResult{}, err
 	}
@@ -106,11 +120,15 @@ func (r *Registry) GitDiff(ctx context.Context, req GitDiffRequest) (GitDiffResu
 	if strings.TrimSpace(req.RepoRoot) == "" {
 		return GitDiffResult{}, fmt.Errorf("git_diff.repo_root must not be empty")
 	}
+	approvedRoot, err := ResolveApprovedRepoRoot(req.RepoRoot, r.approvedRepoRoots)
+	if err != nil {
+		return GitDiffResult{}, err
+	}
 	args := []string{"diff", "--no-ext-diff"}
 	if req.StagedOnly {
 		args = append(args, "--staged")
 	}
-	output, err := runGit(ctx, req.RepoRoot, args...)
+	output, err := runGit(ctx, approvedRoot, args...)
 	if err != nil {
 		return GitDiffResult{}, err
 	}

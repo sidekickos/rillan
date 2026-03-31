@@ -176,8 +176,16 @@ type SystemEncryptionConfig struct {
 }
 
 type SystemPolicy struct {
-	Identity SystemIdentityRules
-	Rules    SystemPolicyRules
+	Identity       SystemIdentityRules
+	Rules          SystemPolicyRules
+	TrustedModules []TrustedModulePolicy `json:"trusted_modules,omitempty"`
+}
+
+type TrustedModulePolicy struct {
+	RepoRoot       string `json:"repo_root,omitempty"`
+	ModuleID       string `json:"module_id,omitempty"`
+	ManifestSHA256 string `json:"manifest_sha256,omitempty"`
+	AllowStdio     bool   `json:"allow_stdio,omitempty"`
 }
 
 type SystemIdentityRules struct {
@@ -251,9 +259,17 @@ type QueryRewriteConfig struct {
 }
 
 type ServerConfig struct {
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	LogLevel string `yaml:"log_level"`
+	Host                 string           `yaml:"host"`
+	Port                 int              `yaml:"port"`
+	LogLevel             string           `yaml:"log_level"`
+	AllowNonLoopbackBind bool             `yaml:"allow_non_loopback_bind,omitempty"`
+	Auth                 ServerAuthConfig `yaml:"auth,omitempty"`
+}
+
+type ServerAuthConfig struct {
+	Enabled      bool   `yaml:"enabled,omitempty"`
+	AuthStrategy string `yaml:"auth_strategy,omitempty"`
+	SessionRef   string `yaml:"session_ref,omitempty"`
 }
 
 type ProviderConfig struct {
@@ -297,8 +313,9 @@ type RetrievalConfig struct {
 }
 
 type AgentRuntimeConfig struct {
-	Enabled bool      `yaml:"enabled"`
-	MCP     MCPConfig `yaml:"mcp"`
+	Enabled           bool      `yaml:"enabled"`
+	ApprovedRepoRoots []string  `yaml:"approved_repo_roots,omitempty"`
+	MCP               MCPConfig `yaml:"mcp"`
 }
 
 type MCPConfig struct {
@@ -314,9 +331,15 @@ func DefaultConfig() Config {
 	return Config{
 		SchemaVersion: SchemaVersionV2,
 		Server: ServerConfig{
-			Host:     "127.0.0.1",
-			Port:     8420,
-			LogLevel: "info",
+			Host:                 "127.0.0.1",
+			Port:                 8420,
+			LogLevel:             "info",
+			AllowNonLoopbackBind: false,
+			Auth: ServerAuthConfig{
+				Enabled:      false,
+				AuthStrategy: AuthStrategyAPIKey,
+				SessionRef:   "keyring://rillan/auth/daemon",
+			},
 		},
 		Provider: ProviderConfig{
 			Type: ProviderOpenAI,
@@ -354,7 +377,8 @@ func DefaultConfig() Config {
 			},
 		},
 		Agent: AgentRuntimeConfig{
-			Enabled: false,
+			Enabled:           false,
+			ApprovedRepoRoots: []string{},
 			MCP: MCPConfig{
 				Enabled:        false,
 				ReadOnly:       true,

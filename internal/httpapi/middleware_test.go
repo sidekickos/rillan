@@ -8,10 +8,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/sidekickos/rillan/internal/observability"
 )
 
 func TestWrapWithMiddlewareAddsRequestIDHeader(t *testing.T) {
-	handler := WrapWithMiddleware(slog.New(slog.NewTextHandler(io.Discard, nil)), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := WrapWithMiddleware(slog.New(slog.NewTextHandler(io.Discard, nil)), observability.NewRegistry(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if RequestIDFromContext(r.Context()) == "" {
 			t.Fatal("missing request id in context")
 		}
@@ -30,7 +32,7 @@ func TestWrapWithMiddlewareAddsRequestIDHeader(t *testing.T) {
 func TestRequestLoggerDoesNotLeakAuthorizationHeader(t *testing.T) {
 	buffer := &strings.Builder{}
 	logger := slog.New(slog.NewTextHandler(buffer, nil))
-	handler := WrapWithMiddleware(logger, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := WrapWithMiddleware(logger, observability.NewRegistry(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 

@@ -2,6 +2,7 @@ package skills
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,27 +10,49 @@ import (
 	"strings"
 )
 
+var ErrUnapprovedRepoRoot = errors.New("repo root is not approved")
+
 var gitCommand = func(ctx context.Context, repoRoot string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repoRoot}, args...)...)
 	return cmd.CombinedOutput()
+}
+
+func ResolveApprovedRepoRoot(repoRoot string, approvedRoots []string) (string, error) {
+	if strings.TrimSpace(repoRoot) == "" {
+		return "", fmt.Errorf("repo_root must not be empty")
+	}
+	resolvedRoot, err := canonicalPath(repoRoot)
+	if err != nil {
+		return "", err
+	}
+	if len(approvedRoots) == 0 {
+		return "", fmt.Errorf("%w: %s", ErrUnapprovedRepoRoot, repoRoot)
+	}
+	for _, approvedRoot := range approvedRoots {
+		resolvedApproved, err := canonicalPath(approvedRoot)
+		if err != nil {
+			continue
+		}
+		if resolvedApproved == resolvedRoot {
+			return resolvedRoot, nil
+		}
+	}
+	return "", fmt.Errorf("%w: %s", ErrUnapprovedRepoRoot, repoRoot)
 }
 
 func readFileBounded(ctx context.Context, repoRoot string, relativePath string, maxChars int) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	absRoot, err := filepath.Abs(repoRoot)
+	resolvedRoot, err := canonicalPath(repoRoot)
 	if err != nil {
 		return "", err
 	}
-	absPath, err := filepath.Abs(filepath.Join(absRoot, relativePath))
+	resolvedPath, err := resolveRepoPath(resolvedRoot, relativePath)
 	if err != nil {
 		return "", err
 	}
-	if !strings.HasPrefix(absPath, absRoot+string(filepath.Separator)) && absPath != absRoot {
-		return "", fmt.Errorf("path %q escapes repo root", relativePath)
-	}
-	data, err := os.ReadFile(absPath)
+	data, err := os.ReadFile(resolvedPath)
 	if err != nil {
 		return "", err
 	}
@@ -40,18 +63,27 @@ func searchRepoBounded(ctx context.Context, repoRoot string, query string, maxMa
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	absRoot, err := filepath.Abs(repoRoot)
+	resolvedRoot, err := canonicalPath(repoRoot)
 	if err != nil {
 		return nil, err
 	}
 	needle := strings.ToLower(strings.TrimSpace(query))
 	results := make([]RepoMatch, 0, maxMatches)
-	err = filepath.WalkDir(absRoot, func(path string, entry os.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(resolvedRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			resolvedPath, err := canonicalPath(path)
+			if err != nil {
+				return nil
+			}
+			if !strings.HasPrefix(resolvedPath, resolvedRoot+string(filepath.Separator)) && resolvedPath != resolvedRoot {
+				return nil
+			}
 		}
 		if entry.IsDir() {
 			switch entry.Name() {
@@ -69,7 +101,7 @@ func searchRepoBounded(ctx context.Context, repoRoot string, query string, maxMa
 		if idx == -1 {
 			return nil
 		}
-		rel, err := filepath.Rel(absRoot, path)
+		rel, err := filepath.Rel(resolvedRoot, path)
 		if err != nil {
 			return err
 		}
@@ -83,6 +115,25 @@ func searchRepoBounded(ctx context.Context, repoRoot string, query string, maxMa
 		return nil, err
 	}
 	return results, nil
+}
+
+func canonicalPath(path string) (string, error) {
+	absolutePath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(absolutePath)
+}
+
+func resolveRepoPath(resolvedRoot string, relativePath string) (string, error) {
+	resolvedPath, err := canonicalPath(filepath.Join(resolvedRoot, relativePath))
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(resolvedPath, resolvedRoot+string(filepath.Separator)) && resolvedPath != resolvedRoot {
+		return "", fmt.Errorf("path %q escapes repo root", relativePath)
+	}
+	return resolvedPath, nil
 }
 
 func runGit(ctx context.Context, repoRoot string, args ...string) (string, error) {

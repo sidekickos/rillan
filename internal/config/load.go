@@ -120,6 +120,10 @@ func LoadWithMode(path string, mode ValidationMode) (Config, error) {
 	return cfg, nil
 }
 
+func ApplyEnvironmentOverrides(cfg *Config) {
+	applyEnvOverrides(cfg)
+}
+
 func Write(path string, cfg Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
@@ -293,6 +297,10 @@ func ResolveRuntimeProviderHostConfig(cfg Config, project ProjectConfig) (Runtim
 		Default:   selected.ID,
 		Providers: providers,
 	}, nil
+}
+
+func ResolveServerAuthBearer(cfg Config) (string, error) {
+	return secretstore.ResolveBearer(cfg.Server.Auth.SessionRef, secretstore.Binding{AuthStrategy: strings.TrimSpace(cfg.Server.Auth.AuthStrategy)})
 }
 
 func ResolveRuntimeProviderAdapterConfig(cfg Config, selected ResolvedLLMProvider) (RuntimeProviderAdapterConfig, error) {
@@ -477,6 +485,9 @@ func applyDerivedDefaults(cfg *Config, configPath string) {
 	if cfg.Server.LogLevel == "" {
 		cfg.Server.LogLevel = "info"
 	}
+	if cfg.Agent.ApprovedRepoRoots == nil {
+		cfg.Agent.ApprovedRepoRoots = []string{}
+	}
 	if cfg.LocalModel.BaseURL == "" {
 		cfg.LocalModel.BaseURL = "http://127.0.0.1:11434"
 	}
@@ -497,6 +508,9 @@ func applyDerivedDefaults(cfg *Config, configPath string) {
 	}
 	if cfg.Index.Root != "" {
 		cfg.Index.Root = resolveIndexRoot(configPath, cfg.Index.Root)
+	}
+	for i := range cfg.Agent.ApprovedRepoRoots {
+		cfg.Agent.ApprovedRepoRoots[i] = resolveProjectPath(configPath, cfg.Agent.ApprovedRepoRoots[i])
 	}
 	if cfg.LLMs.Providers == nil {
 		cfg.LLMs.Providers = slices.Clone(DefaultConfig().LLMs.Providers)
@@ -603,6 +617,10 @@ func applyEnvOverrides(cfg *Config) {
 	applyStringEnv(&cfg.Server.Host, "RILLAN_SERVER_HOST")
 	applyIntEnv(&cfg.Server.Port, "RILLAN_SERVER_PORT")
 	applyStringEnv(&cfg.Server.LogLevel, "RILLAN_SERVER_LOG_LEVEL")
+	applyBoolEnv(&cfg.Server.AllowNonLoopbackBind, "RILLAN_SERVER_ALLOW_NON_LOOPBACK_BIND")
+	applyBoolEnv(&cfg.Server.Auth.Enabled, "RILLAN_SERVER_AUTH_ENABLED")
+	applyStringEnv(&cfg.Server.Auth.AuthStrategy, "RILLAN_SERVER_AUTH_STRATEGY")
+	applyStringEnv(&cfg.Server.Auth.SessionRef, "RILLAN_SERVER_AUTH_SESSION_REF")
 
 	applyStringEnv(&cfg.Provider.Type, "RILLAN_PROVIDER_TYPE")
 	applyStringEnv(&cfg.Provider.OpenAI.BaseURL, "RILLAN_OPENAI_BASE_URL")

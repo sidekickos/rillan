@@ -7,8 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/sidekickos/rillan/internal/chat"
 	"github.com/sidekickos/rillan/internal/config"
-	internalopenai "github.com/sidekickos/rillan/internal/openai"
+	"github.com/sidekickos/rillan/internal/observability"
 )
 
 func TestChatCompletionsTranslatesRequestAndAppliesAnthropicHeaders(t *testing.T) {
@@ -34,15 +35,15 @@ func TestChatCompletionsTranslatesRequestAndAppliesAnthropicHeaders(t *testing.T
 	defer server.Close()
 
 	client := New(config.AnthropicConfig{BaseURL: server.URL, APIKey: "anthropic-key"}, server.Client())
-	resp, err := client.ChatCompletions(context.Background(), internalopenai.ChatCompletionRequest{
+	resp, err := client.ChatCompletions(context.Background(), chat.ProviderRequest{Request: chat.Request{
 		Model: "claude-sonnet-4-5",
-		Messages: []internalopenai.Message{
+		Messages: []chat.Message{
 			{Role: "system", Content: []byte(`"Keep answers terse."`)},
 			{Role: "developer", Content: []byte(`"Use markdown."`)},
 			{Role: "user", Content: []byte(`"ping"`)},
 			{Role: "assistant", Content: []byte(`"pong"`)},
 		},
-	}, nil)
+	}})
 	if err != nil {
 		t.Fatalf("ChatCompletions returned error: %v", err)
 	}
@@ -62,15 +63,91 @@ func TestChatCompletionsTranslatesRequestAndAppliesAnthropicHeaders(t *testing.T
 	}
 }
 
+func TestChatCompletionsPropagatesRequestID(t *testing.T) {
+	t.Parallel()
+
+	var gotRequestID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestID = r.Header.Get("X-Request-ID")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_123","type":"message"}`))
+	}))
+	defer server.Close()
+
+	client := New(config.AnthropicConfig{BaseURL: server.URL, APIKey: "anthropic-key"}, server.Client())
+	ctx := observability.WithRequestID(context.Background(), "req-123")
+	resp, err := client.ChatCompletions(ctx, chat.ProviderRequest{Request: chat.Request{Model: "claude-sonnet-4-5", Messages: []chat.Message{{Role: "user", Content: []byte(`"ping"`)}}}})
+	if err != nil {
+		t.Fatalf("ChatCompletions returned error: %v", err)
+	}
+	defer resp.Body.Close()
+	if got, want := gotRequestID, "req-123"; got != want {
+		t.Fatalf("X-Request-ID = %q, want %q", got, want)
+	}
+}
+
 func TestChatCompletionsRejectsUnsupportedRoles(t *testing.T) {
 	t.Parallel()
 
 	client := New(config.AnthropicConfig{BaseURL: "https://api.anthropic.com", APIKey: "anthropic-key"}, nil)
-	_, err := client.ChatCompletions(context.Background(), internalopenai.ChatCompletionRequest{
+	_, err := client.ChatCompletions(context.Background(), chat.ProviderRequest{Request: chat.Request{
 		Model:    "claude-sonnet-4-5",
-		Messages: []internalopenai.Message{{Role: "tool", Content: []byte(`"result"`)}},
-	}, nil)
+		Messages: []chat.Message{{Role: "tool", Content: []byte(`"result"`)}},
+	}})
 	if err == nil {
 		t.Fatal("expected ChatCompletions to reject tool-role messages")
+	}
+}
+
+func TestReadyChecksModelsEndpoint(t *testing.T) {
+	t.Parallel()
+
+	var gotPath string
+	var gotAPIKey string
+	var gotVersion string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAPIKey = r.Header.Get("x-api-key")
+		gotVersion = r.Header.Get("anthropic-version")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := New(config.AnthropicConfig{BaseURL: server.URL, APIKey: "anthropic-key"}, server.Client())
+	if err := client.Ready(context.Background()); err != nil {
+		t.Fatalf("Ready returned error: %v", err)
+	}
+	if got, want := gotPath, "/v1/models"; got != want {
+		t.Fatalf("path = %q, want %q", got, want)
+	}
+	if got, want := gotAPIKey, "anthropic-key"; got != want {
+		t.Fatalf("x-api-key = %q, want %q", got, want)
+	}
+	if got, want := gotVersion, apiVersion; got != want {
+		t.Fatalf("anthropic-version = %q, want %q", got, want)
+	}
+}
+
+func TestReadyReturnsErrorOnNonOKStatus(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	client := New(config.AnthropicConfig{BaseURL: server.URL, APIKey: "anthropic-key"}, server.Client())
+	if err := client.Ready(context.Background()); err == nil {
+		t.Fatal("expected Ready to fail on non-200 status")
+	}
+}
+
+func TestNewUsesBoundedDefaultClientTimeout(t *testing.T) {
+	client := New(config.AnthropicConfig{BaseURL: "https://api.anthropic.com", APIKey: "anthropic-key"}, nil)
+	if client.httpClient == nil {
+		t.Fatal("expected httpClient to be set")
+	}
+	if client.httpClient.Timeout <= 0 {
+		t.Fatalf("httpClient timeout = %v, want > 0", client.httpClient.Timeout)
 	}
 }

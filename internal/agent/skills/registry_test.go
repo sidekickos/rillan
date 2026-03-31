@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/sidekickos/rillan/internal/index"
@@ -19,7 +20,7 @@ func TestRegistryReadFilesReturnsBoundedContent(t *testing.T) {
 		t.Fatalf("WriteFile returned error: %v", err)
 	}
 
-	registry := NewRegistry()
+	registry := NewRegistry([]string{repo})
 	result, err := registry.ReadFiles(context.Background(), ReadFilesRequest{RepoRoot: repo, Paths: []string{"docs/guide.md"}, MaxFiles: 2, MaxCharsPerFile: 5})
 	if err != nil {
 		t.Fatalf("ReadFiles returned error: %v", err)
@@ -42,7 +43,7 @@ func TestRegistrySearchRepoReturnsMatches(t *testing.T) {
 		t.Fatalf("WriteFile returned error: %v", err)
 	}
 
-	registry := NewRegistry()
+	registry := NewRegistry([]string{repo})
 	result, err := registry.SearchRepo(context.Background(), SearchRepoRequest{RepoRoot: repo, Query: "context", MaxMatches: 3, MaxSnippetChars: 40})
 	if err != nil {
 		t.Fatalf("SearchRepo returned error: %v", err)
@@ -62,7 +63,7 @@ func TestRegistryIndexLookupReturnsMatches(t *testing.T) {
 		t.Fatalf("ReplaceAll returned error: %v", err)
 	}
 
-	registry := NewRegistry()
+	registry := NewRegistry(nil)
 	result, err := registry.IndexLookup(context.Background(), IndexLookupRequest{DBPath: store.Path(), Query: "context", MaxMatches: 2, MaxSnippetChars: 40})
 	if err != nil {
 		t.Fatalf("IndexLookup returned error: %v", err)
@@ -85,7 +86,7 @@ func TestRegistryGitCommandsReturnStructuredResults(t *testing.T) {
 		}
 	})
 
-	registry := NewRegistry()
+	registry := NewRegistry([]string{repo})
 	status, err := registry.GitStatus(context.Background(), GitStatusRequest{RepoRoot: repo, MaxEntries: 5})
 	if err != nil {
 		t.Fatalf("GitStatus returned error: %v", err)
@@ -113,7 +114,7 @@ func TestRegistryExecuteDispatchesReadOnlyTool(t *testing.T) {
 		t.Fatalf("WriteFile returned error: %v", err)
 	}
 
-	registry := NewRegistry()
+	registry := NewRegistry([]string{repo})
 	result, err := registry.Execute(context.Background(), ExecuteRequest{Name: ToolNameReadFiles, RepoRoot: repo, Paths: []string{"docs/guide.md"}})
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
@@ -135,4 +136,102 @@ func stubGit(t *testing.T, fn func(context.Context, string, ...string) ([]byte, 
 	original := gitCommand
 	gitCommand = fn
 	t.Cleanup(func() { gitCommand = original })
+}
+
+func TestRegistryGitStatusRejectsUnapprovedRepoRoot(t *testing.T) {
+	repo := t.TempDir()
+	registry := NewRegistry(nil)
+
+	if _, err := registry.GitStatus(context.Background(), GitStatusRequest{RepoRoot: repo, MaxEntries: 5}); err == nil {
+		t.Fatal("expected GitStatus to reject unapproved repo root")
+	}
+}
+
+func TestRegistryReadFilesRejectsSymlinkEscape(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior is platform-specific")
+	}
+
+	repo := t.TempDir()
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "secret.txt")
+	if err := os.WriteFile(outsidePath, []byte("outside secret"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	linkPath := filepath.Join(repo, "docs", "escape.txt")
+	if err := os.MkdirAll(filepath.Dir(linkPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.Symlink(outsidePath, linkPath); err != nil {
+		t.Fatalf("Symlink returned error: %v", err)
+	}
+
+	registry := NewRegistry([]string{repo})
+	if _, err := registry.ReadFiles(context.Background(), ReadFilesRequest{RepoRoot: repo, Paths: []string{"docs/escape.txt"}, MaxFiles: 1, MaxCharsPerFile: 40}); err == nil {
+		t.Fatal("expected ReadFiles to reject symlink escape")
+	}
+}
+
+func TestRegistrySearchRepoSkipsSymlinkedOutsideFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior is platform-specific")
+	}
+
+	repo := t.TempDir()
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "secret.txt")
+	if err := os.WriteFile(outsidePath, []byte("outside needle"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	insidePath := filepath.Join(repo, "docs", "guide.md")
+	if err := os.MkdirAll(filepath.Dir(insidePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(insidePath, []byte("inside needle"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	linkPath := filepath.Join(repo, "docs", "escape.txt")
+	if err := os.Symlink(outsidePath, linkPath); err != nil {
+		t.Fatalf("Symlink returned error: %v", err)
+	}
+
+	registry := NewRegistry([]string{repo})
+	result, err := registry.SearchRepo(context.Background(), SearchRepoRequest{RepoRoot: repo, Query: "needle", MaxMatches: 5, MaxSnippetChars: 40})
+	if err != nil {
+		t.Fatalf("SearchRepo returned error: %v", err)
+	}
+	if got, want := len(result.Matches), 1; got != want {
+		t.Fatalf("matches len = %d, want %d", got, want)
+	}
+	if got, want := result.Matches[0].Path, filepath.Join("docs", "guide.md"); got != want {
+		t.Fatalf("match path = %q, want %q", got, want)
+	}
+}
+
+func TestRegistrySearchRepoIncludesSymlinkedInRepoFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior is platform-specific")
+	}
+
+	repo := t.TempDir()
+	insidePath := filepath.Join(repo, "docs", "guide.md")
+	if err := os.MkdirAll(filepath.Dir(insidePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(insidePath, []byte("inside needle"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	linkPath := filepath.Join(repo, "docs", "guide-link.md")
+	if err := os.Symlink(insidePath, linkPath); err != nil {
+		t.Fatalf("Symlink returned error: %v", err)
+	}
+
+	registry := NewRegistry([]string{repo})
+	result, err := registry.SearchRepo(context.Background(), SearchRepoRequest{RepoRoot: repo, Query: "needle", MaxMatches: 5, MaxSnippetChars: 40})
+	if err != nil {
+		t.Fatalf("SearchRepo returned error: %v", err)
+	}
+	if got, want := len(result.Matches), 2; got != want {
+		t.Fatalf("matches len = %d, want %d", got, want)
+	}
 }

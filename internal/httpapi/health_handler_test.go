@@ -35,6 +35,12 @@ func TestReadyHandlerReturnsServiceUnavailableWhenCheckerFails(t *testing.T) {
 	if got, want := recorder.Code, http.StatusServiceUnavailable; got != want {
 		t.Fatalf("status = %d, want %d", got, want)
 	}
+	body := recorder.Body.String()
+	for _, want := range []string{"degraded", "provider", "unavailable"} {
+		if !contains(body, want) {
+			t.Fatalf("expected %q in response, got %s", want, body)
+		}
+	}
 }
 
 func TestReadyHandlerIncludesLocalModelStatusWhenAvailable(t *testing.T) {

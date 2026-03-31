@@ -176,6 +176,12 @@ rillan serve --config ./testdata/configs/my-config.yaml
 
 The daemon logs structured JSON to stderr. Set `server.log_level` to `debug` for verbose output.
 
+Operational paths worth checking during development:
+
+- `GET /readyz` returns `503` with degraded provider details when the active upstream readiness check fails.
+- `GET /metrics` exposes Prometheus-style counters for HTTP, provider, and retrieval activity.
+- The audit ledger is written to `${XDG_DATA_HOME:-$HOME/.local/share}/rillan/audit/ledger.jsonl` on Linux and the platform-specific data dir on macOS.
+
 ## Packaging
 
 Service files for daemon deployment:

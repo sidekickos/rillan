@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/sidekickos/rillan/internal/audit"
 	"github.com/sidekickos/rillan/internal/config"
 	"github.com/sidekickos/rillan/internal/httpapi"
+	"github.com/sidekickos/rillan/internal/observability"
 	"github.com/sidekickos/rillan/internal/policy"
 	"github.com/sidekickos/rillan/internal/providers"
 )
@@ -22,14 +24,27 @@ type App struct {
 	server     *http.Server
 }
 
+const (
+	serverReadHeaderTimeout = 5 * time.Second
+	serverReadTimeout       = 30 * time.Second
+	serverWriteTimeout      = 60 * time.Second
+	serverIdleTimeout       = 120 * time.Second
+)
+
 func New(cfg config.Config, project config.ProjectConfig, system *config.SystemConfig, configPath string, projectConfigPath string, systemConfigPath string, logger *slog.Logger) (*App, error) {
 	if logger == nil {
 		logger = slog.Default()
+	}
+	if cfg.Server.Auth.Enabled {
+		if _, err := config.ResolveServerAuthBearer(cfg); err != nil {
+			return nil, err
+		}
 	}
 	auditStore, err := audit.NewStore(audit.DefaultLedgerPath())
 	if err != nil {
 		return nil, err
 	}
+	metrics := observability.NewRegistry()
 	builder := runtimeSnapshotBuilder{
 		configPath:       configPath,
 		systemConfigPath: systemConfigPath,
@@ -44,7 +59,11 @@ func New(cfg config.Config, project config.ProjectConfig, system *config.SystemC
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	server := &http.Server{
-		Addr: addr,
+		Addr:              addr,
+		ReadHeaderTimeout: serverReadHeaderTimeout,
+		ReadTimeout:       serverReadTimeout,
+		WriteTimeout:      serverWriteTimeout,
+		IdleTimeout:       serverIdleTimeout,
 		Handler: httpapi.NewRouter(logger, initialState.snapshot.Provider, cfg, httpapi.RouterOptions{
 			ProjectConfig:      initialState.snapshot.ProjectConfig,
 			SystemConfig:       initialState.snapshot.SystemConfig,
@@ -62,6 +81,7 @@ func New(cfg config.Config, project config.ProjectConfig, system *config.SystemC
 			OllamaChecker:      initialState.snapshot.OllamaChecker,
 			RuntimeSnapshot:    runtime.CurrentSnapshot,
 			RefreshRuntime:     runtime.Refresh,
+			Metrics:            metrics,
 		}),
 	}
 
@@ -87,11 +107,14 @@ func (a *App) Run(ctx context.Context) error {
 
 	go func() {
 		<-ctx.Done()
+		a.logger.Info("server shutdown started", "addr", a.addr)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5e9)
 		defer cancel()
 		if err := a.server.Shutdown(shutdownCtx); err != nil {
 			a.logger.Error("server shutdown failed", "error", err.Error())
+			return
 		}
+		a.logger.Info("server shutdown completed", "addr", a.addr)
 	}()
 
 	err := a.server.ListenAndServe()

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/sidekickos/rillan/internal/config"
 	"github.com/sidekickos/rillan/internal/providers"
@@ -46,6 +47,8 @@ type StatusInput struct {
 	Config     config.Config
 	HTTPClient *http.Client
 }
+
+const readinessProbeTimeout = 3 * time.Second
 
 func BuildStatusCatalog(ctx context.Context, input StatusInput) StatusCatalog {
 	statuses := make([]CandidateStatus, 0, len(input.Catalog.Candidates))
@@ -114,7 +117,9 @@ func buildCandidateStatus(ctx context.Context, cfg config.Config, candidate Cand
 		return finalizeCandidateStatus(status)
 	}
 
-	if err := provider.Ready(ctx); err != nil {
+	readyCtx, cancel := context.WithTimeout(ctx, readinessProbeTimeout)
+	defer cancel()
+	if err := provider.Ready(readyCtx); err != nil {
 		status.UnavailableReasons = append(status.UnavailableReasons, UnavailableReason{
 			Code:   UnavailableReasonNotReady,
 			Detail: err.Error(),

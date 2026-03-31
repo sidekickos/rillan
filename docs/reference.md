@@ -105,11 +105,14 @@ Bundled runtime families:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/healthz` | Liveness probe -- always returns `200` |
-| `GET` | `/readyz` | Readiness probe -- returns `200` when the daemon is ready to serve |
-| `POST` | `/v1/chat/completions` | OpenAI-compatible ingress with routed provider dispatch |
-| `GET` | `/v1/agent/tasks` | Agent task listing |
-| `GET/POST` | `/v1/agent/proposals/` | Agent proposal submission and retrieval |
+| `GET` | `/healthz` | Liveness probe -- always returns `200` and stays unauthenticated |
+| `GET` | `/readyz` | Readiness probe -- returns `200` when the daemon is ready and `503` with degraded provider details when upstream readiness fails |
+| `GET` | `/metrics` | Prometheus-style runtime metrics; requires `Authorization: Bearer <token>` when `server.auth.enabled` is true |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible ingress with routed provider dispatch; requires `Authorization: Bearer <token>` when `server.auth.enabled` is true |
+| `POST` | `/v1/agent/tasks` | Agent task execution/proposal endpoint; requires `Authorization: Bearer <token>` when `server.auth.enabled` is true |
+| `POST` | `/v1/agent/proposals/{id}/decision` | Agent proposal approval/denial endpoint; requires `Authorization: Bearer <token>` when `server.auth.enabled` is true |
+
+When `server.auth.enabled` is true, all non-health HTTP endpoints (including `/metrics`) require a bearer token. Missing or invalid bearer tokens return `401 Unauthorized` with `WWW-Authenticate: Bearer`.
 
 ### Per-request retrieval override
 
@@ -133,14 +136,14 @@ The primary config file stores daemon settings, named LLM providers, named MCP e
 
 | Section | Purpose |
 |---------|---------|
-| `server` | Host, port, log level |
+| `server` | Host, port, log level, daemon bind guard, and optional daemon endpoint auth |
 | `auth` | Control-plane endpoint and session reference |
 | `llms` | Named LLM provider registry with default selection |
 | `mcps` | Named MCP endpoint registry with default selection |
 | `index` | Index root directory, include/exclude globs, chunk size |
 | `retrieval` | Enable/disable retrieval, top-k, max context size |
 | `local_model` | Ollama integration for embeddings and query rewriting |
-| `agent` | Agent and MCP runtime toggles |
+| `agent` | Agent toggles, approved repo roots, and MCP runtime limits |
 | `runtime` | Vector store mode and local model base URL |
 
 Provider entries can also declare `model_pins` to tell the router which exact model names should prefer that entry.
@@ -170,9 +173,23 @@ instructions:
 
 Encrypted policy and identity rules stored in `system.yaml`. Managed by tooling, not hand-edited.
 
+Repo-local modules become runtime-active only when both of these are true:
+- the repo enables them via `project.modules.enabled`
+- the local machine trusts them in encrypted system policy via `trusted_modules`
+
+Each trusted module record is matched by repo root, module ID, and manifest SHA-256. Module-provided `stdio` adapters additionally require `allow_stdio: true` in the trust record.
+
 ### Secrets
 
 All secrets (API keys, tokens, OIDC bundles) are stored in the OS keyring. Config files reference them via `keyring://` URIs (e.g., `keyring://rillan/llm/openai`). Never put secrets in YAML.
+
+If `server.auth.enabled` is true, `server.auth.session_ref` must point at a keyring-backed credential containing either an `api_key` or `access_token`. The daemon treats that value as an opaque bearer token for inbound HTTP authentication.
+
+If `server.host` is not loopback, `server.allow_non_loopback_bind` must be true and `server.auth.enabled` must also be true. The current runtime supports wildcard non-loopback binds (`0.0.0.0`, `::`) but not specific non-loopback interface addresses.
+
+If `agent.approved_repo_roots` is set, agent read-only repo tools only operate on exact approved repo roots after canonical path resolution. Caller-supplied repo roots outside that allowlist are rejected.
+
+The daemon exposes low-cardinality Prometheus-style counters for HTTP requests, provider outcomes, and retrieval usage at `/metrics`.
 
 ### Routing behavior
 
@@ -203,6 +220,10 @@ Environment variables are supported for backward compatibility and CI/automation
 | `RILLAN_SERVER_HOST` | `server.host` |
 | `RILLAN_SERVER_PORT` | `server.port` |
 | `RILLAN_SERVER_LOG_LEVEL` | `server.log_level` |
+| `RILLAN_SERVER_ALLOW_NON_LOOPBACK_BIND` | `server.allow_non_loopback_bind` |
+| `RILLAN_SERVER_AUTH_ENABLED` | `server.auth.enabled` |
+| `RILLAN_SERVER_AUTH_STRATEGY` | `server.auth.auth_strategy` |
+| `RILLAN_SERVER_AUTH_SESSION_REF` | `server.auth.session_ref` |
 | `RILLAN_PROVIDER_TYPE` | `provider.type` |
 | `RILLAN_OPENAI_BASE_URL` | `provider.openai.base_url` |
 | `RILLAN_OPENAI_API_KEY` / `OPENAI_API_KEY` | `provider.openai.api_key` |

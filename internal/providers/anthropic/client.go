@@ -5,16 +5,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/sidekickos/rillan/internal/chat"
 	"github.com/sidekickos/rillan/internal/config"
-	internalopenai "github.com/sidekickos/rillan/internal/openai"
+	"github.com/sidekickos/rillan/internal/observability"
 )
 
 const (
-	apiVersion       = "2023-06-01"
-	defaultMaxTokens = 1024
+	apiVersion         = "2023-06-01"
+	defaultMaxTokens   = 1024
+	defaultHTTPTimeout = 30 * time.Second
 )
 
 type Client struct {
@@ -38,7 +42,7 @@ type messagesRequestMessage struct {
 
 func New(cfg config.AnthropicConfig, client *http.Client) *Client {
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: defaultHTTPTimeout}
 	}
 
 	return &Client{
@@ -52,12 +56,32 @@ func (c *Client) Name() string {
 	return "anthropic"
 }
 
-func (c *Client) Ready(context.Context) error {
+func (c *Client) Ready(ctx context.Context) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/models", nil)
+	if err != nil {
+		return fmt.Errorf("create readiness request: %w", err)
+	}
+	request.Header.Set("x-api-key", c.apiKey)
+	request.Header.Set("anthropic-version", apiVersion)
+	request.Header.Set("Accept", "application/json")
+	if requestID := observability.RequestIDFromContext(ctx); requestID != "" {
+		request.Header.Set("X-Request-ID", requestID)
+	}
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("perform readiness request: %w", err)
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, response.Body)
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("anthropic readiness returned status %d", response.StatusCode)
+	}
 	return nil
 }
 
-func (c *Client) ChatCompletions(ctx context.Context, req internalopenai.ChatCompletionRequest, _ []byte) (*http.Response, error) {
-	translated, err := translateChatCompletionRequest(req)
+func (c *Client) ChatCompletions(ctx context.Context, req chat.ProviderRequest) (*http.Response, error) {
+	translated, err := translateChatCompletionRequest(req.Request)
 	if err != nil {
 		return nil, err
 	}
@@ -75,6 +99,9 @@ func (c *Client) ChatCompletions(ctx context.Context, req internalopenai.ChatCom
 	request.Header.Set("anthropic-version", apiVersion)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
+	if requestID := observability.RequestIDFromContext(ctx); requestID != "" {
+		request.Header.Set("X-Request-ID", requestID)
+	}
 
 	response, err := c.httpClient.Do(request)
 	if err != nil {
@@ -84,7 +111,7 @@ func (c *Client) ChatCompletions(ctx context.Context, req internalopenai.ChatCom
 	return response, nil
 }
 
-func translateChatCompletionRequest(req internalopenai.ChatCompletionRequest) (messagesRequest, error) {
+func translateChatCompletionRequest(req chat.Request) (messagesRequest, error) {
 	translated := messagesRequest{
 		Model:     req.Model,
 		Messages:  make([]messagesRequestMessage, 0, len(req.Messages)),
@@ -94,7 +121,7 @@ func translateChatCompletionRequest(req internalopenai.ChatCompletionRequest) (m
 	systemParts := make([]string, 0, len(req.Messages))
 
 	for idx, message := range req.Messages {
-		content, err := internalopenai.MessageText(message)
+		content, err := chat.MessageText(message)
 		if err != nil {
 			return messagesRequest{}, fmt.Errorf("read messages[%d].content: %w", idx, err)
 		}

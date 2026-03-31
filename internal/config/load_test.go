@@ -220,6 +220,72 @@ func TestLoadAppliesAgentEnvOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadAppliesServerAuthEnvOverrides(t *testing.T) {
+	t.Setenv("RILLAN_OPENAI_API_KEY", "test-key")
+	t.Setenv("RILLAN_SERVER_AUTH_ENABLED", "true")
+	t.Setenv("RILLAN_SERVER_AUTH_STRATEGY", "device_oidc")
+	t.Setenv("RILLAN_SERVER_AUTH_SESSION_REF", "keyring://rillan/auth/custom-daemon")
+
+	path := writeTempConfig(t, `runtime:
+  vector_store_mode: "embedded"
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if !cfg.Server.Auth.Enabled {
+		t.Fatal("expected server.auth.enabled to be overridden")
+	}
+	if got, want := cfg.Server.Auth.AuthStrategy, "device_oidc"; got != want {
+		t.Fatalf("server.auth.auth_strategy = %q, want %q", got, want)
+	}
+	if got, want := cfg.Server.Auth.SessionRef, "keyring://rillan/auth/custom-daemon"; got != want {
+		t.Fatalf("server.auth.session_ref = %q, want %q", got, want)
+	}
+}
+
+func TestLoadAppliesServerBindEnvOverride(t *testing.T) {
+	t.Setenv("RILLAN_OPENAI_API_KEY", "test-key")
+	t.Setenv("RILLAN_SERVER_ALLOW_NON_LOOPBACK_BIND", "true")
+
+	path := writeTempConfig(t, `runtime:
+  vector_store_mode: "embedded"
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if !cfg.Server.AllowNonLoopbackBind {
+		t.Fatal("expected server.allow_non_loopback_bind to be overridden")
+	}
+}
+
+func TestLoadResolvesApprovedRepoRootsRelativeToConfigDirectory(t *testing.T) {
+	t.Setenv("RILLAN_OPENAI_API_KEY", "test-key")
+
+	configDir := t.TempDir()
+	path := filepath.Join(configDir, "config.yaml")
+	if err := os.WriteFile(path, []byte(`agent:
+  approved_repo_roots:
+    - "../repo-a"
+runtime:
+  vector_store_mode: "embedded"
+`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	want := filepath.Clean(filepath.Join(configDir, "..", "repo-a"))
+	if got := cfg.Agent.ApprovedRepoRoots[0]; got != want {
+		t.Fatalf("approved repo root = %q, want %q", got, want)
+	}
+}
+
 func TestLoadResolvesRelativeIndexRootFromConfigDirectory(t *testing.T) {
 	t.Setenv("RILLAN_OPENAI_API_KEY", "test-key")
 
@@ -808,6 +874,31 @@ func TestLoadSystemAppliesDefaults(t *testing.T) {
 	}
 	if got, want := cfg.Policy.Identity.People[0], "alice@example.com"; got != want {
 		t.Fatalf("policy identity = %q, want %q", got, want)
+	}
+}
+
+func TestLoadSystemPreservesTrustedModules(t *testing.T) {
+	key := []byte("0123456789abcdef0123456789abcdef")
+	payload, err := encryptSystemPolicyPayloadForTest(SystemPolicy{
+		TrustedModules: []TrustedModulePolicy{{RepoRoot: "/repo", ModuleID: "demo", ManifestSHA256: "abc123", AllowStdio: true}},
+	}, key, strings.NewReader("123456789012"))
+	if err != nil {
+		t.Fatalf("encryptSystemPolicyPayload returned error: %v", err)
+	}
+	withSystemKeyringGet(t, func(service, account string) (string, error) {
+		return hex.EncodeToString(key), nil
+	})
+
+	systemPath := writeTempSystemConfig(t, "encrypted_payload: \""+payload+"\"\n")
+	cfg, err := LoadSystem(systemPath)
+	if err != nil {
+		t.Fatalf("LoadSystem returned error: %v", err)
+	}
+	if got, want := len(cfg.Policy.TrustedModules), 1; got != want {
+		t.Fatalf("len(trusted_modules) = %d, want %d", got, want)
+	}
+	if got, want := cfg.Policy.TrustedModules[0].ModuleID, "demo"; got != want {
+		t.Fatalf("trusted module id = %q, want %q", got, want)
 	}
 }
 

@@ -1,6 +1,8 @@
 package modules
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,15 +32,16 @@ type LSPServerConfig struct {
 }
 
 type LoadedModule struct {
-	ID           string
-	DisplayName  string
-	Version      string
-	RootPath     string
-	ManifestPath string
-	Entrypoint   []string
-	LLMAdapters  []config.LLMProviderConfig
-	MCPServers   []config.MCPServerConfig
-	LSPServers   []LSPServerConfig
+	ID             string
+	DisplayName    string
+	Version        string
+	RootPath       string
+	ManifestSHA256 string
+	ManifestPath   string
+	Entrypoint     []string
+	LLMAdapters    []config.LLMProviderConfig
+	MCPServers     []config.MCPServerConfig
+	LSPServers     []LSPServerConfig
 }
 
 type Catalog struct {
@@ -84,6 +87,13 @@ func DefaultProjectModulesDir(projectConfigPath string) string {
 	return filepath.Join(filepath.Dir(projectConfigPath), "modules")
 }
 
+func ProjectRootFromConfigPath(projectConfigPath string) string {
+	if strings.TrimSpace(projectConfigPath) == "" {
+		return ""
+	}
+	return filepath.Dir(filepath.Dir(projectConfigPath))
+}
+
 func LoadProjectCatalog(projectConfigPath string) (Catalog, error) {
 	modulesDir := DefaultProjectModulesDir(projectConfigPath)
 	entries, err := os.ReadDir(modulesDir)
@@ -115,7 +125,7 @@ func LoadProjectCatalog(projectConfigPath string) (Catalog, error) {
 			return Catalog{}, fmt.Errorf("parse module manifest %s: %w", manifestPath, err)
 		}
 
-		loaded, err := loadModuleManifest(filepath.Dir(manifestPath), manifestPath, manifest)
+		loaded, err := loadModuleManifest(filepath.Dir(manifestPath), manifestPath, manifest, manifestSHA256(data))
 		if err != nil {
 			return Catalog{}, err
 		}
@@ -130,7 +140,7 @@ func LoadProjectCatalog(projectConfigPath string) (Catalog, error) {
 	return Catalog{ModulesDir: modulesDir, Modules: modules}, nil
 }
 
-func loadModuleManifest(rootPath string, manifestPath string, manifest Manifest) (LoadedModule, error) {
+func loadModuleManifest(rootPath string, manifestPath string, manifest Manifest, manifestSHA256 string) (LoadedModule, error) {
 	moduleID := strings.TrimSpace(manifest.ID)
 	if moduleID == "" {
 		return LoadedModule{}, fmt.Errorf("module manifest %s id must not be empty", manifestPath)
@@ -157,16 +167,80 @@ func loadModuleManifest(rootPath string, manifestPath string, manifest Manifest)
 	}
 
 	return LoadedModule{
-		ID:           moduleID,
-		DisplayName:  strings.TrimSpace(manifest.DisplayName),
-		Version:      version,
-		RootPath:     rootPath,
-		ManifestPath: manifestPath,
-		Entrypoint:   normalizeCommand(rootPath, manifest.Entrypoint),
-		LLMAdapters:  llmAdapters,
-		MCPServers:   mcpServers,
-		LSPServers:   lspServers,
+		ID:             moduleID,
+		DisplayName:    strings.TrimSpace(manifest.DisplayName),
+		Version:        version,
+		RootPath:       rootPath,
+		ManifestSHA256: manifestSHA256,
+		ManifestPath:   manifestPath,
+		Entrypoint:     normalizeCommand(rootPath, manifest.Entrypoint),
+		LLMAdapters:    llmAdapters,
+		MCPServers:     mcpServers,
+		LSPServers:     lspServers,
 	}, nil
+}
+
+func FilterTrusted(catalog Catalog, projectConfigPath string, system *config.SystemConfig) (Catalog, error) {
+	if len(catalog.Modules) == 0 {
+		return catalog, nil
+	}
+	projectRoot, err := canonicalProjectRoot(ProjectRootFromConfigPath(projectConfigPath))
+	if err != nil {
+		return Catalog{}, err
+	}
+	trusted := make([]LoadedModule, 0, len(catalog.Modules))
+	for _, module := range catalog.Modules {
+		trust, ok := findModuleTrust(system, projectRoot, module)
+		if !ok {
+			return Catalog{}, fmt.Errorf("enabled module %q is not trusted for repo %s", module.ID, projectRoot)
+		}
+		if moduleUsesStdio(module) && !trust.AllowStdio {
+			return Catalog{}, fmt.Errorf("enabled module %q requires explicit stdio trust", module.ID)
+		}
+		trusted = append(trusted, module)
+	}
+	return Catalog{ModulesDir: catalog.ModulesDir, Modules: trusted}, nil
+}
+
+func manifestSHA256(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func canonicalProjectRoot(root string) (string, error) {
+	if strings.TrimSpace(root) == "" {
+		return "", fmt.Errorf("project root must not be empty")
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(absRoot)
+}
+
+func findModuleTrust(system *config.SystemConfig, projectRoot string, module LoadedModule) (config.TrustedModulePolicy, bool) {
+	if system == nil {
+		return config.TrustedModulePolicy{}, false
+	}
+	for _, trust := range system.Policy.TrustedModules {
+		trustedRoot, err := canonicalProjectRoot(trust.RepoRoot)
+		if err != nil {
+			continue
+		}
+		if trustedRoot == projectRoot && strings.TrimSpace(trust.ModuleID) == module.ID && strings.TrimSpace(trust.ManifestSHA256) == module.ManifestSHA256 {
+			return trust, true
+		}
+	}
+	return config.TrustedModulePolicy{}, false
+}
+
+func moduleUsesStdio(module LoadedModule) bool {
+	for _, adapter := range module.LLMAdapters {
+		if strings.TrimSpace(adapter.Transport) == config.LLMTransportSTDIO {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeLLMAdapters(moduleID string, rootPath string, adapters []config.LLMProviderConfig) ([]config.LLMProviderConfig, error) {

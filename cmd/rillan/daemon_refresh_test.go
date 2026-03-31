@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -66,5 +67,72 @@ func TestNotifyDaemonRuntimeRefreshSurfacesDaemonFailures(t *testing.T) {
 	}
 	if got := err.Error(); got == "" || !strings.Contains(got, "reload failed") {
 		t.Fatalf("error = %q, want reload failed", got)
+	}
+}
+
+func TestNotifyDaemonRuntimeRefreshIncludesAuthorizationWhenServerAuthEnabled(t *testing.T) {
+	t.Cleanup(resetSecretstoreTestHooks)
+	secretstoreKeyringGet(func(service string, user string) (string, error) {
+		if got, want := fmt.Sprintf("%s/%s", service, user), "rillan/auth/daemon"; got != want {
+			return "", fmt.Errorf("keyring lookup = %q, want %q", got, want)
+		}
+		return `{"api_key":"daemon-secret","auth_strategy":"api_key"}`, nil
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.Header.Get("Authorization"), "Bearer daemon-secret"; got != want {
+			t.Fatalf("Authorization = %q, want %q", got, want)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("url.Parse returned error: %v", err)
+	}
+	host, portText, err := net.SplitHostPort(parsed.Host)
+	if err != nil {
+		t.Fatalf("SplitHostPort returned error: %v", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatalf("Atoi returned error: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Server.Host = host
+	cfg.Server.Port = port
+	cfg.Server.Auth.Enabled = true
+
+	if err := notifyDaemonRuntimeRefresh(cfg); err != nil {
+		t.Fatalf("notifyDaemonRuntimeRefresh returned error: %v", err)
+	}
+}
+
+func TestRefreshDaemonAfterMutationAppliesEnvironmentAuthOverrides(t *testing.T) {
+	t.Cleanup(resetSecretstoreTestHooks)
+	t.Setenv("RILLAN_SERVER_AUTH_ENABLED", "true")
+	secretstoreKeyringGet(func(service string, user string) (string, error) {
+		if got, want := fmt.Sprintf("%s/%s", service, user), "rillan/auth/daemon"; got != want {
+			return "", fmt.Errorf("keyring lookup = %q, want %q", got, want)
+		}
+		return `{"api_key":"daemon-secret","auth_strategy":"api_key"}`, nil
+	})
+
+	original := daemonRefreshNotifier
+	t.Cleanup(func() { daemonRefreshNotifier = original })
+	daemonRefreshNotifier = func(cfg config.Config) error {
+		if !cfg.Server.Auth.Enabled {
+			t.Fatal("expected env override to enable server auth")
+		}
+		return nil
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Server.Auth.Enabled = false
+
+	if err := refreshDaemonAfterMutation(cfg, "updated control-plane auth"); err != nil {
+		t.Fatalf("refreshDaemonAfterMutation returned error: %v", err)
 	}
 }

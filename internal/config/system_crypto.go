@@ -14,6 +14,10 @@ import (
 
 var systemKeyringGet = keyring.Get
 
+func SetSystemKeyringGetForTest(fn func(service, account string) (string, error)) {
+	systemKeyringGet = fn
+}
+
 func decryptSystemPolicy(cfg *SystemConfig) error {
 	secret, err := systemKeyringGet(cfg.Encryption.KeyringService, cfg.Encryption.KeyringAccount)
 	if err != nil {

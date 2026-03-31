@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/sidekickos/rillan/internal/config"
 )
 
 func TestLoadProjectCatalogReturnsDeterministicModules(t *testing.T) {
@@ -121,6 +123,59 @@ func TestFilterEnabledRejectsUnknownModule(t *testing.T) {
 
 	if _, err := FilterEnabled(catalog, []string{"missing"}); err == nil {
 		t.Fatal("expected unknown enabled module to fail")
+	}
+}
+
+func TestFilterTrustedRejectsUntrustedModule(t *testing.T) {
+	projectConfigPath := filepath.Join(t.TempDir(), ".rillan", "project.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectConfigPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(projectConfigPath, []byte("name: demo\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	catalog := Catalog{ModulesDir: "/repo/.rillan/modules", Modules: []LoadedModule{{ID: "alpha", ManifestSHA256: "abc123"}}}
+
+	if _, err := FilterTrusted(catalog, projectConfigPath, &config.SystemConfig{}); err == nil {
+		t.Fatal("expected untrusted module to fail")
+	}
+}
+
+func TestFilterTrustedRejectsStdioModuleWithoutStdioTrust(t *testing.T) {
+	projectRoot := t.TempDir()
+	projectConfigPath := filepath.Join(projectRoot, ".rillan", "project.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectConfigPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(projectConfigPath, []byte("name: demo\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	catalog := Catalog{ModulesDir: "/repo/.rillan/modules", Modules: []LoadedModule{{ID: "alpha", ManifestSHA256: "abc123", LLMAdapters: []config.LLMProviderConfig{{ID: "alpha-stdio", Transport: config.LLMTransportSTDIO}}}}}
+	systemCfg := &config.SystemConfig{Policy: config.SystemPolicy{TrustedModules: []config.TrustedModulePolicy{{RepoRoot: projectRoot, ModuleID: "alpha", ManifestSHA256: "abc123"}}}}
+
+	if _, err := FilterTrusted(catalog, projectConfigPath, systemCfg); err == nil {
+		t.Fatal("expected stdio module without stdio trust to fail")
+	}
+}
+
+func TestFilterTrustedAcceptsTrustedHTTPModule(t *testing.T) {
+	projectRoot := t.TempDir()
+	projectConfigPath := filepath.Join(projectRoot, ".rillan", "project.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectConfigPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(projectConfigPath, []byte("name: demo\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	catalog := Catalog{ModulesDir: "/repo/.rillan/modules", Modules: []LoadedModule{{ID: "alpha", ManifestSHA256: "abc123", LLMAdapters: []config.LLMProviderConfig{{ID: "alpha-http", Transport: config.LLMTransportHTTP}}}}}
+	systemCfg := &config.SystemConfig{Policy: config.SystemPolicy{TrustedModules: []config.TrustedModulePolicy{{RepoRoot: projectRoot, ModuleID: "alpha", ManifestSHA256: "abc123"}}}}
+
+	filtered, err := FilterTrusted(catalog, projectConfigPath, systemCfg)
+	if err != nil {
+		t.Fatalf("FilterTrusted returned error: %v", err)
+	}
+	if got, want := len(filtered.Modules), 1; got != want {
+		t.Fatalf("len(filtered.Modules) = %d, want %d", got, want)
 	}
 }
 

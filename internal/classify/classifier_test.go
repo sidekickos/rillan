@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sidekickos/rillan/internal/chat"
 	"github.com/sidekickos/rillan/internal/ollama"
-	internalopenai "github.com/sidekickos/rillan/internal/openai"
 	"github.com/sidekickos/rillan/internal/policy"
 )
 
@@ -105,19 +105,19 @@ type failingClassifier struct {
 	err error
 }
 
-func (f failingClassifier) Classify(context.Context, internalopenai.ChatCompletionRequest) (*policy.IntentClassification, error) {
+func (f failingClassifier) Classify(context.Context, chat.Request) (*policy.IntentClassification, error) {
 	return nil, f.err
 }
 
-func testRequest(t *testing.T) internalopenai.ChatCompletionRequest {
+func testRequest(t *testing.T) chat.Request {
 	t.Helper()
 	content, err := json.Marshal("please review this diff")
 	if err != nil {
 		t.Fatalf("json.Marshal returned error: %v", err)
 	}
-	return internalopenai.ChatCompletionRequest{
+	return chat.Request{
 		Model: "gpt-4o-mini",
-		Messages: []internalopenai.Message{{
+		Messages: []chat.Message{{
 			Role:    "user",
 			Content: content,
 		}},

@@ -55,6 +55,6 @@ func (h *AgentProposalHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(proposal)
+	_ = json.NewEncoder(w).Encode(fromAgentActionProposal(proposal))
 	h.logger.Info("agent proposal resolved", "request_id", RequestIDFromContext(r.Context()), "proposal_id", proposal.ID, "status", proposal.Status)
 }

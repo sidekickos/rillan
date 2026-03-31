@@ -29,6 +29,15 @@ func TestWriteExampleConfigWritesStarterConfig(t *testing.T) {
 	if !strings.Contains(content, "index:") {
 		t.Fatalf("starter config missing index block: %s", content)
 	}
+	if !strings.Contains(content, "session_ref: \"keyring://rillan/auth/daemon\"") {
+		t.Fatalf("starter config missing daemon auth session ref: %s", content)
+	}
+	if !strings.Contains(content, "allow_non_loopback_bind: false") {
+		t.Fatalf("starter config missing non-loopback bind guard: %s", content)
+	}
+	if !strings.Contains(content, "approved_repo_roots: []") {
+		t.Fatalf("starter config missing approved repo roots: %s", content)
+	}
 	for _, forbidden := range []string{"encrypted_payload", "keyring_service", "system:"} {
 		if strings.Contains(content, forbidden) {
 			t.Fatalf("starter config leaked system-only field %q: %s", forbidden, content)

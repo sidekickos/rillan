@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/sidekickos/rillan/internal/chat"
 	"github.com/sidekickos/rillan/internal/ollama"
-	internalopenai "github.com/sidekickos/rillan/internal/openai"
 	"github.com/sidekickos/rillan/internal/policy"
 )
 
@@ -27,7 +27,7 @@ Request:
 %s`
 
 type Classifier interface {
-	Classify(ctx context.Context, req internalopenai.ChatCompletionRequest) (*policy.IntentClassification, error)
+	Classify(ctx context.Context, req chat.Request) (*policy.IntentClassification, error)
 }
 
 type OllamaClassifier struct {
@@ -56,7 +56,7 @@ func NewSafeClassifier(primary Classifier) *SafeClassifier {
 	return &SafeClassifier{primary: primary}
 }
 
-func (c *OllamaClassifier) Classify(ctx context.Context, req internalopenai.ChatCompletionRequest) (*policy.IntentClassification, error) {
+func (c *OllamaClassifier) Classify(ctx context.Context, req chat.Request) (*policy.IntentClassification, error) {
 	input, err := buildInput(req)
 	if err != nil {
 		return nil, err
@@ -78,7 +78,7 @@ func (c *OllamaClassifier) Classify(ctx context.Context, req internalopenai.Chat
 	return classification, nil
 }
 
-func (c *SafeClassifier) Classify(ctx context.Context, req internalopenai.ChatCompletionRequest) (*policy.IntentClassification, error) {
+func (c *SafeClassifier) Classify(ctx context.Context, req chat.Request) (*policy.IntentClassification, error) {
 	if c == nil || c.primary == nil {
 		return nil, nil
 	}
@@ -90,10 +90,10 @@ func (c *SafeClassifier) Classify(ctx context.Context, req internalopenai.ChatCo
 	return classification, nil
 }
 
-func buildInput(req internalopenai.ChatCompletionRequest) (string, error) {
+func buildInput(req chat.Request) (string, error) {
 	parts := make([]string, 0, len(req.Messages))
 	for _, message := range req.Messages {
-		content, err := internalopenai.MessageText(message)
+		content, err := chat.MessageText(message)
 		if err != nil {
 			return "", fmt.Errorf("read message content: %w", err)
 		}

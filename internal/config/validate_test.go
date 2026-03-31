@@ -64,6 +64,69 @@ func TestValidateForStatusDoesNotRequireRoot(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsEnabledServerAuthWithoutSessionRef(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Server.Auth.Enabled = true
+	cfg.Server.Auth.SessionRef = ""
+
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected validation error for empty server auth session ref")
+	}
+}
+
+func TestValidateRejectsInvalidServerAuthStrategy(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Server.Auth.Enabled = true
+	cfg.Server.Auth.AuthStrategy = "basic"
+
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected validation error for invalid server auth strategy")
+	}
+}
+
+func TestValidateRejectsNonLoopbackBindWithoutOptIn(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Server.Host = "0.0.0.0"
+	cfg.Server.Auth.Enabled = true
+
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected non-loopback bind without opt-in to fail")
+	}
+}
+
+func TestValidateRejectsNonLoopbackBindWithoutAuth(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Server.Host = "0.0.0.0"
+	cfg.Server.AllowNonLoopbackBind = true
+	cfg.Server.Auth.Enabled = false
+
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected non-loopback bind without auth to fail")
+	}
+}
+
+func TestValidateAcceptsWildcardBindWithExplicitOptInAndAuth(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Server.Host = "0.0.0.0"
+	cfg.Server.AllowNonLoopbackBind = true
+	cfg.Server.Auth.Enabled = true
+
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+}
+
+func TestValidateRejectsSpecificNonLoopbackBind(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Server.Host = "192.168.1.10"
+	cfg.Server.AllowNonLoopbackBind = true
+	cfg.Server.Auth.Enabled = true
+
+	if err := Validate(cfg); err == nil {
+		t.Fatal("expected specific non-loopback bind to fail")
+	}
+}
+
 func TestValidateLocalModelRequiresBaseURLWhenEnabled(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.SchemaVersion = SchemaVersionV1

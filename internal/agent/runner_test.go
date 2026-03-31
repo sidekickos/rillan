@@ -11,7 +11,7 @@ import (
 )
 
 func TestSharedRunnerReusesOneRuntimeAcrossRoles(t *testing.T) {
-	runner := NewRunner()
+	runner := NewRunner(nil)
 	profiles := DefaultRoleProfiles()
 	pkg := ContextPackage{
 		Task:   TaskSection{Goal: "review repo", ExecutionMode: string(policy.ExecutionModePlanFirst)},
@@ -39,7 +39,7 @@ func TestSharedRunnerExecutesRequestedReadOnlySkills(t *testing.T) {
 		t.Fatalf("WriteFile returned error: %v", err)
 	}
 
-	runner := NewRunner()
+	runner := NewRunner([]string{repo})
 	profiles := DefaultRoleProfiles()
 	pkg := ContextPackage{
 		Task:             TaskSection{Goal: "inspect repo", ExecutionMode: string(policy.ExecutionModeDirect)},
@@ -65,7 +65,7 @@ func TestSharedRunnerExecutesRequestedReadOnlySkills(t *testing.T) {
 }
 
 func TestSharedRunnerAppliesBudgetBeforeReturningContextEcho(t *testing.T) {
-	runner := NewRunner()
+	runner := NewRunner(nil)
 	profiles := DefaultRoleProfiles()
 	pkg := ContextPackage{
 		Task:   TaskSection{Goal: "review repo", ExecutionMode: string(policy.ExecutionModeDirect)},
@@ -79,5 +79,28 @@ func TestSharedRunnerAppliesBudgetBeforeReturningContextEcho(t *testing.T) {
 	}
 	if got, want := len(result.ContextEcho.Facts), 1; got != want {
 		t.Fatalf("facts len = %d, want %d", got, want)
+	}
+}
+
+func TestSharedRunnerRejectsUnapprovedRepoRoots(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, "docs", "guide.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("agent skills can read repo files"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	runner := NewRunner(nil)
+	profiles := DefaultRoleProfiles()
+	pkg := ContextPackage{
+		Task:             TaskSection{Goal: "inspect repo", ExecutionMode: string(policy.ExecutionModeDirect)},
+		SkillInvocations: []SkillInvocation{{Kind: SkillKindReadFiles, RepoRoot: repo, Paths: []string{"docs/guide.md"}}},
+		Budget:           BudgetSection{MaxEvidenceItems: 2, MaxFacts: 2, MaxOpenQuestions: 2, MaxWorkingMemoryItems: 2, MaxItemChars: 120},
+	}
+
+	if _, err := runner.Run(context.Background(), profiles[RoleResearcher], pkg); err == nil {
+		t.Fatal("expected Run to reject unapproved repo root")
 	}
 }

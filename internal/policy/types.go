@@ -3,8 +3,8 @@ package policy
 import (
 	"context"
 
+	"github.com/sidekickos/rillan/internal/chat"
 	"github.com/sidekickos/rillan/internal/config"
-	internalopenai "github.com/sidekickos/rillan/internal/openai"
 )
 
 type Verdict string
@@ -117,7 +117,7 @@ type RetrievalPlan struct {
 type EvaluationInput struct {
 	Project        config.ProjectConfig
 	Runtime        RuntimePolicy
-	Request        internalopenai.ChatCompletionRequest
+	Request        chat.Request
 	Body           []byte
 	Scan           ScanResult
 	Classification *IntentClassification
@@ -127,7 +127,7 @@ type EvaluationInput struct {
 type EvaluationResult struct {
 	Verdict   Verdict
 	Reason    string
-	Request   internalopenai.ChatCompletionRequest
+	Request   chat.Request
 	Body      []byte
 	Findings  []Finding
 	Trace     PolicyTrace

@@ -19,7 +19,7 @@ func TestAgentTaskHandlerReturnsOrchestrationResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore returned error: %v", err)
 	}
-	handler := NewAgentTaskHandler(nil, agent.NewApprovalGate(store))
+	handler := NewAgentTaskHandler(nil, agent.NewApprovalGate(store), nil, nil)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/agent/tasks", strings.NewReader(`{"goal":"review repo risk","execution_mode":"plan_first"}`))
 
@@ -45,7 +45,7 @@ func TestAgentTaskHandlerReturnsProposalInsteadOfExecuting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore returned error: %v", err)
 	}
-	handler := NewAgentTaskHandler(nil, agent.NewApprovalGate(store))
+	handler := NewAgentTaskHandler(nil, agent.NewApprovalGate(store), nil, nil)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/agent/tasks", strings.NewReader(`{"goal":"patch repo","proposed_action":{"kind":"apply_patch","summary":"apply patch to repo"}}`))
 
@@ -75,7 +75,7 @@ func TestAgentTaskHandlerReturnsProposalInsteadOfExecuting(t *testing.T) {
 }
 
 func TestAgentTaskHandlerRejectsInvalidProposal(t *testing.T) {
-	handler := NewAgentTaskHandler(nil, nil)
+	handler := NewAgentTaskHandler(nil, nil, nil, nil)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/agent/tasks", strings.NewReader(`{"goal":"patch repo","proposed_action":{"kind":"unknown","summary":"oops"}}`))
 
@@ -96,7 +96,7 @@ func TestAgentTaskHandlerReturnsReadOnlySkillResults(t *testing.T) {
 		t.Fatalf("WriteFile returned error: %v", err)
 	}
 
-	handler := NewAgentTaskHandler(nil, nil)
+	handler := NewAgentTaskHandler(nil, nil, nil, []string{repo})
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/agent/tasks", strings.NewReader(`{"goal":"inspect repo","repo_root":"`+repo+`","skill_invocations":[{"kind":"read_files","repo_root":"`+repo+`","paths":["docs/guide.md"]}]}`))
 
@@ -112,13 +112,39 @@ func TestAgentTaskHandlerReturnsReadOnlySkillResults(t *testing.T) {
 	if got, want := len(response.Result.SkillResults), 1; got != want {
 		t.Fatalf("skill results len = %d, want %d", got, want)
 	}
-	if got, want := response.Result.SkillResults[0].Kind, agent.SkillKindReadFiles; got != want {
+	if got, want := response.Result.SkillResults[0].Kind, string(agent.SkillKindReadFiles); got != want {
 		t.Fatalf("skill result kind = %q, want %q", got, want)
 	}
 }
 
+func TestAgentTaskHandlerRejectsUnapprovedRepoRoot(t *testing.T) {
+	repo := t.TempDir()
+	handler := NewAgentTaskHandler(nil, nil, nil, nil)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/agent/tasks", strings.NewReader(`{"goal":"inspect repo","repo_root":"`+repo+`"}`))
+
+	handler.ServeHTTP(recorder, request)
+
+	if got, want := recorder.Code, http.StatusBadRequest; got != want {
+		t.Fatalf("status = %d, want %d", got, want)
+	}
+}
+
+func TestAgentTaskHandlerRejectsUnapprovedSkillInvocationRepoRoot(t *testing.T) {
+	repo := t.TempDir()
+	handler := NewAgentTaskHandler(nil, nil, nil, nil)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/agent/tasks", strings.NewReader(`{"goal":"inspect repo","skill_invocations":[{"kind":"read_files","repo_root":"`+repo+`","paths":["docs/guide.md"]}]}`))
+
+	handler.ServeHTTP(recorder, request)
+
+	if got, want := recorder.Code, http.StatusBadRequest; got != want {
+		t.Fatalf("status = %d, want %d", got, want)
+	}
+}
+
 func TestAgentTaskHandlerAcceptsOptionalMCPSnapshot(t *testing.T) {
-	handler := NewAgentTaskHandler(nil, nil)
+	handler := NewAgentTaskHandler(nil, nil, nil, nil)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/agent/tasks", strings.NewReader(`{"goal":"inspect editor state","mcp_snapshot":{"open_files":[{"path":"internal/httpapi/chat_completions_handler.go"}],"diagnostics":[{"path":"internal/httpapi/chat_completions_handler.go","severity":"warning","message":"example"}]}}`))
 
@@ -135,7 +161,7 @@ func TestAgentProposalHandlerApprovesPendingProposal(t *testing.T) {
 		t.Fatalf("NewStore returned error: %v", err)
 	}
 	gate := agent.NewApprovalGate(store)
-	taskHandler := NewAgentTaskHandler(nil, gate)
+	taskHandler := NewAgentTaskHandler(nil, gate, nil, nil)
 	proposalHandler := NewAgentProposalHandler(nil, gate)
 
 	taskRecorder := httptest.NewRecorder()
@@ -156,7 +182,7 @@ func TestAgentProposalHandlerApprovesPendingProposal(t *testing.T) {
 	if got, want := decisionRecorder.Code, http.StatusOK; got != want {
 		t.Fatalf("status = %d, want %d", got, want)
 	}
-	var proposal agent.ActionProposal
+	var proposal AgentActionProposal
 	if err := json.Unmarshal(decisionRecorder.Body.Bytes(), &proposal); err != nil {
 		t.Fatalf("Unmarshal returned error: %v", err)
 	}
@@ -171,7 +197,7 @@ func TestAgentProposalHandlerDeniesPendingProposal(t *testing.T) {
 		t.Fatalf("NewStore returned error: %v", err)
 	}
 	gate := agent.NewApprovalGate(store)
-	taskHandler := NewAgentTaskHandler(nil, gate)
+	taskHandler := NewAgentTaskHandler(nil, gate, nil, nil)
 	proposalHandler := NewAgentProposalHandler(nil, gate)
 
 	taskRecorder := httptest.NewRecorder()
@@ -189,7 +215,7 @@ func TestAgentProposalHandlerDeniesPendingProposal(t *testing.T) {
 	if got, want := decisionRecorder.Code, http.StatusOK; got != want {
 		t.Fatalf("status = %d, want %d", got, want)
 	}
-	var proposal agent.ActionProposal
+	var proposal AgentActionProposal
 	if err := json.Unmarshal(decisionRecorder.Body.Bytes(), &proposal); err != nil {
 		t.Fatalf("Unmarshal returned error: %v", err)
 	}

@@ -15,6 +15,7 @@ type RuntimeSnapshot struct {
 	Provider      providers.Provider
 	ProviderHost  providerHost
 	Pipeline      *retrieval.Pipeline
+	Config        config.Config
 	ProjectConfig config.ProjectConfig
 	SystemConfig  *config.SystemConfig
 	Modules       modules.Catalog

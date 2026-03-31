@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/sidekickos/rillan/internal/chat"
 	"github.com/sidekickos/rillan/internal/config"
-	internalopenai "github.com/sidekickos/rillan/internal/openai"
+	"github.com/sidekickos/rillan/internal/observability"
 )
 
 type Client struct {
@@ -17,9 +20,11 @@ type Client struct {
 	httpClient *http.Client
 }
 
+const defaultHTTPTimeout = 30 * time.Second
+
 func New(cfg config.OpenAIConfig, client *http.Client) *Client {
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: defaultHTTPTimeout}
 	}
 
 	return &Client{
@@ -33,12 +38,31 @@ func (c *Client) Name() string {
 	return "openai"
 }
 
-func (c *Client) Ready(context.Context) error {
+func (c *Client) Ready(ctx context.Context) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/models", nil)
+	if err != nil {
+		return fmt.Errorf("create readiness request: %w", err)
+	}
+	request.Header.Set("Authorization", "Bearer "+c.apiKey)
+	request.Header.Set("Accept", "application/json")
+	if requestID := observability.RequestIDFromContext(ctx); requestID != "" {
+		request.Header.Set("X-Request-ID", requestID)
+	}
+
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("perform readiness request: %w", err)
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, response.Body)
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("openai readiness returned status %d", response.StatusCode)
+	}
 	return nil
 }
 
-func (c *Client) ChatCompletions(ctx context.Context, _ internalopenai.ChatCompletionRequest, body []byte) (*http.Response, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+func (c *Client) ChatCompletions(ctx context.Context, req chat.ProviderRequest) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(req.RawBody))
 	if err != nil {
 		return nil, fmt.Errorf("create upstream request: %w", err)
 	}
@@ -46,6 +70,9 @@ func (c *Client) ChatCompletions(ctx context.Context, _ internalopenai.ChatCompl
 	request.Header.Set("Authorization", "Bearer "+c.apiKey)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
+	if requestID := observability.RequestIDFromContext(ctx); requestID != "" {
+		request.Header.Set("X-Request-ID", requestID)
+	}
 
 	response, err := c.httpClient.Do(request)
 	if err != nil {

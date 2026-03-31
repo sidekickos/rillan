@@ -10,6 +10,7 @@ import (
 	"github.com/sidekickos/rillan/internal/classify"
 	"github.com/sidekickos/rillan/internal/config"
 	"github.com/sidekickos/rillan/internal/index"
+	"github.com/sidekickos/rillan/internal/observability"
 	"github.com/sidekickos/rillan/internal/policy"
 	"github.com/sidekickos/rillan/internal/providers"
 	"github.com/sidekickos/rillan/internal/retrieval"
@@ -35,11 +36,11 @@ type RouterOptions struct {
 	RouteStatus        routing.StatusCatalog
 	RuntimeSnapshot    RuntimeSnapshotFunc
 	RefreshRuntime     func(context.Context) error
+	Metrics            *observability.Registry
 }
 
 func NewRouter(logger *slog.Logger, provider providers.Provider, cfg config.Config, opts RouterOptions) http.Handler {
 	mux := http.NewServeMux()
-	gate := agent.NewApprovalGate(opts.AuditRecorder)
 	pipeline := retrieval.NewPipeline(cfg.Retrieval, index.DefaultDBPath(), opts.PipelineOpts...)
 	runtimeSnapshot := opts.RuntimeSnapshot
 	if runtimeSnapshot == nil {
@@ -64,11 +65,17 @@ func NewRouter(logger *slog.Logger, provider providers.Provider, cfg config.Conf
 	}
 	mux.HandleFunc("GET /healthz", HealthHandler)
 	mux.HandleFunc("GET /readyz", ReadyHandlerFromRuntime(runtimeSnapshot))
-	if opts.RefreshRuntime != nil {
-		mux.HandleFunc("POST "+AdminRuntimeRefreshPath, NewAdminReloadHandler(logger, opts.RefreshRuntime))
+	if opts.Metrics != nil {
+		mux.Handle("GET /metrics", protectedHandler(logger, runtimeSnapshot, cfg, opts.Metrics.Handler()))
 	}
-	mux.Handle("/v1/agent/tasks", NewAgentTaskHandler(logger, gate))
-	mux.Handle("/v1/agent/proposals/", NewAgentProposalHandler(logger, gate))
+	if opts.RefreshRuntime != nil {
+		mux.Handle("POST "+AdminRuntimeRefreshPath, protectedHandler(logger, runtimeSnapshot, cfg, NewAdminReloadHandler(logger, opts.RefreshRuntime)))
+	}
+	if cfg.Agent.Enabled {
+		gate := agent.NewApprovalGate(opts.AuditRecorder)
+		mux.Handle("/v1/agent/tasks", protectedHandler(logger, runtimeSnapshot, cfg, NewAgentTaskHandler(logger, gate, runtimeSnapshot, buildApprovedRepoRoots(cfg))))
+		mux.Handle("/v1/agent/proposals/", protectedHandler(logger, runtimeSnapshot, cfg, NewAgentProposalHandler(logger, gate)))
+	}
 
 	handlerOpts := make([]ChatCompletionsHandlerOption, 0, 4)
 	handlerOpts = append(handlerOpts, WithRuntimeSnapshot(runtimeSnapshot))
@@ -99,8 +106,31 @@ func NewRouter(logger *slog.Logger, provider providers.Provider, cfg config.Conf
 	if len(opts.RouteStatus.Candidates) > 0 {
 		handlerOpts = append(handlerOpts, WithRouteStatus(opts.RouteStatus))
 	}
+	if opts.Metrics != nil {
+		handlerOpts = append(handlerOpts, WithMetrics(opts.Metrics))
+	}
 
-	mux.Handle("/v1/chat/completions", NewChatCompletionsHandler(logger, provider, pipeline, handlerOpts...))
+	mux.Handle("/v1/chat/completions", protectedHandler(logger, runtimeSnapshot, cfg, NewChatCompletionsHandler(logger, provider, pipeline, handlerOpts...)))
 
-	return WrapWithMiddleware(logger, mux)
+	return WrapWithMiddleware(logger, opts.Metrics, mux)
+}
+
+func buildApprovedRepoRoots(cfg config.Config) []string {
+	roots := make([]string, 0, len(cfg.Agent.ApprovedRepoRoots)+1)
+	seen := make(map[string]struct{}, len(cfg.Agent.ApprovedRepoRoots)+1)
+	appendRoot := func(root string) {
+		if root == "" {
+			return
+		}
+		if _, ok := seen[root]; ok {
+			return
+		}
+		seen[root] = struct{}{}
+		roots = append(roots, root)
+	}
+	appendRoot(cfg.Index.Root)
+	for _, root := range cfg.Agent.ApprovedRepoRoots {
+		appendRoot(root)
+	}
+	return roots
 }

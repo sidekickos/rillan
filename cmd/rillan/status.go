@@ -1,9 +1,9 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -42,12 +42,19 @@ func newStatusCommand() *cobra.Command {
 				return err
 			}
 
+			var systemCfg *config.SystemConfig
+
 			systemConfigPath := config.DefaultSystemConfigPath()
 			systemConfigState := "missing"
-			if _, err := config.LoadSystem(systemConfigPath); err == nil {
+			if loadedSystemCfg, err := config.LoadSystem(systemConfigPath); err == nil {
 				systemConfigState = "loaded"
+				systemCfg = &loadedSystemCfg
 			} else if !errors.Is(err, os.ErrNotExist) {
 				systemConfigState = "invalid"
+			}
+			enabledModules, err = modules.FilterTrusted(enabledModules, projectConfigPath, systemCfg)
+			if err != nil {
+				return err
 			}
 
 			status, err := index.ReadStatus(cmd.Context(), cfg)
@@ -88,8 +95,10 @@ func newStatusCommand() *cobra.Command {
 
 			// Local model status
 			if cfg.LocalModel.Enabled {
-				client := ollama.New(cfg.LocalModel.BaseURL, &http.Client{})
-				reachable := client.Ping(cmd.Context()) == nil
+				client := ollama.New(cfg.LocalModel.BaseURL, nil)
+				pingCtx, cancel := context.WithTimeout(cmd.Context(), 3*time.Second)
+				reachable := client.Ping(pingCtx) == nil
+				cancel()
 				runtimeState := "ready"
 				if !reachable {
 					runtimeState = "degraded"

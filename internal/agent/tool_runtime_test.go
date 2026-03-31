@@ -19,7 +19,7 @@ func TestReadOnlyToolRuntimeListsPassiveMarkdownSkills(t *testing.T) {
 		t.Fatalf("InstallSkill returned error: %v", err)
 	}
 
-	runtime := NewReadOnlyToolRuntime()
+	runtime := NewReadOnlyToolRuntime(nil)
 	tools, err := runtime.ListTools(context.Background())
 	if err != nil {
 		t.Fatalf("ListTools returned error: %v", err)
@@ -50,7 +50,7 @@ func TestReadOnlyToolRuntimeExecutesBuiltInReadOnlyTool(t *testing.T) {
 		t.Fatalf("WriteFile returned error: %v", err)
 	}
 
-	runtime := NewReadOnlyToolRuntime()
+	runtime := NewReadOnlyToolRuntime([]string{repo})
 	result, err := runtime.ExecuteTool(context.Background(), ToolCall{Name: "read_files", RepoRoot: repo, Paths: []string{"docs/guide.md"}})
 	if err != nil {
 		t.Fatalf("ExecuteTool returned error: %v", err)

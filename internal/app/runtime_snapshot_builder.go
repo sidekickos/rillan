@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/sidekickos/rillan/internal/classify"
 	"github.com/sidekickos/rillan/internal/config"
@@ -23,6 +24,8 @@ type runtimeSnapshotBuilder struct {
 	systemConfigPath string
 	auditLedgerPath  string
 }
+
+const outboundHTTPTimeout = 30 * time.Second
 
 func (b runtimeSnapshotBuilder) buildFromLoaded(ctx context.Context, cfg config.Config, project config.ProjectConfig, system *config.SystemConfig, projectConfigPath string) (*runtimeState, error) {
 	snapshot, err := buildRuntimeSnapshot(ctx, cfg, project, system, b.auditLedgerPath, projectConfigPath)
@@ -74,6 +77,10 @@ func buildRuntimeSnapshot(ctx context.Context, cfg config.Config, project config
 	if err != nil {
 		return httpapi.RuntimeSnapshot{}, err
 	}
+	moduleCatalog, err = modules.FilterTrusted(moduleCatalog, projectConfigPath, system)
+	if err != nil {
+		return httpapi.RuntimeSnapshot{}, err
+	}
 	runtimeConfig, err := augmentRuntimeConfigWithModuleLLMAdapters(cfg, moduleCatalog)
 	if err != nil {
 		return httpapi.RuntimeSnapshot{}, err
@@ -84,7 +91,7 @@ func buildRuntimeSnapshot(ctx context.Context, cfg config.Config, project config
 		return httpapi.RuntimeSnapshot{}, err
 	}
 
-	httpClient := &http.Client{}
+	httpClient := &http.Client{Timeout: outboundHTTPTimeout}
 	providerHost, err := providers.NewHost(providerHostCfg, httpClient)
 	if err != nil {
 		return httpapi.RuntimeSnapshot{}, err
@@ -100,6 +107,7 @@ func buildRuntimeSnapshot(ctx context.Context, cfg config.Config, project config
 		Provider:      provider,
 		ProviderHost:  providerHost,
 		ProjectConfig: project,
+		Config:        runtimeConfig,
 		SystemConfig:  system,
 		Modules:       moduleCatalog,
 		RouteCatalog:  routeCatalog,
@@ -123,7 +131,7 @@ func buildRuntimeSnapshot(ctx context.Context, cfg config.Config, project config
 
 	pipelineOpts := make([]retrieval.PipelineOption, 0, 2)
 	if cfg.LocalModel.Enabled {
-		ollamaClient := ollama.New(cfg.LocalModel.BaseURL, &http.Client{})
+		ollamaClient := ollama.New(cfg.LocalModel.BaseURL, &http.Client{Timeout: outboundHTTPTimeout})
 		snapshot.OllamaChecker = ollamaClient.Ping
 		snapshot.Classifier = classify.NewSafeClassifier(classify.NewOllamaClassifier(ollamaClient, cfg.LocalModel.QueryRewrite.Model))
 

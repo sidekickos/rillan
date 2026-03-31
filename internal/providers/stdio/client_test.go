@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/sidekickos/rillan/internal/chat"
 	internalopenai "github.com/sidekickos/rillan/internal/openai"
 )
 
@@ -25,7 +26,7 @@ printf '%s' '{"status_code":200,"headers":{"Content-Type":["application/json"]},
 	t.Setenv("REQUEST_PATH", requestPath)
 
 	client := New([]string{script})
-	response, err := client.ChatCompletions(context.Background(), internalopenai.ChatCompletionRequest{Model: "demo-model"}, []byte(`{"model":"demo-model"}`))
+	response, err := client.ChatCompletions(context.Background(), chat.ProviderRequest{Request: internalopenai.ChatCompletionRequest{Model: "demo-model"}, RawBody: []byte(`{"model":"demo-model"}`)})
 	if err != nil {
 		t.Fatalf("ChatCompletions returned error: %v", err)
 	}
@@ -58,7 +59,7 @@ func TestClientChatCompletionsReturnsStderrOnFailure(t *testing.T) {
 	script := writeExecutableScript(t, "#!/bin/sh\necho boom >&2\nexit 3\n")
 	client := New([]string{script})
 
-	if _, err := client.ChatCompletions(context.Background(), internalopenai.ChatCompletionRequest{Model: "demo-model"}, []byte(`{"model":"demo-model"}`)); err == nil {
+	if _, err := client.ChatCompletions(context.Background(), chat.ProviderRequest{Request: internalopenai.ChatCompletionRequest{Model: "demo-model"}, RawBody: []byte(`{"model":"demo-model"}`)}); err == nil {
 		t.Fatal("expected ChatCompletions to fail")
 	}
 }
@@ -80,7 +81,7 @@ printf '%s' '{"status_code":42,"body":{"id":"resp_123"}}'
 `)
 	client := New([]string{script})
 
-	if _, err := client.ChatCompletions(context.Background(), internalopenai.ChatCompletionRequest{Model: "demo-model"}, []byte(`{"model":"demo-model"}`)); err == nil {
+	if _, err := client.ChatCompletions(context.Background(), chat.ProviderRequest{Request: internalopenai.ChatCompletionRequest{Model: "demo-model"}, RawBody: []byte(`{"model":"demo-model"}`)}); err == nil {
 		t.Fatal("expected ChatCompletions to reject invalid status_code")
 	}
 }

@@ -3,7 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,7 +18,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sidekickos/rillan/internal/config"
 	"github.com/sidekickos/rillan/internal/index"
+	keyring "github.com/zalando/go-keyring"
 )
 
 func TestStatusCommandShowsCommittedAndFailedAttemptSeparately(t *testing.T) {
@@ -167,6 +176,12 @@ func TestStatusCommandReportsInvalidSystemConfigWithoutKeyringMaterial(t *testin
 
 func TestStatusCommandReportsDiscoveredAndEnabledModules(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", filepath.Join(t.TempDir(), "data"))
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	config.SetSystemKeyringGetForTest(func(service string, account string) (string, error) {
+		return hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef")), nil
+	})
+	t.Cleanup(func() { config.SetSystemKeyringGetForTest(keyring.Get) })
 
 	projectRoot := t.TempDir()
 	configPath := writeStatusConfigWithRoot(t, projectRoot)
@@ -179,6 +194,15 @@ func TestStatusCommandReportsDiscoveredAndEnabledModules(t *testing.T) {
 	}
 	writeModuleManifest(t, filepath.Join(projectRoot, ".rillan", "modules", "demo", "module.yaml"), "id: \"demo\"\nversion: \"0.1.0\"\nentrypoint: [\"./bin/module\"]\n")
 	writeModuleManifest(t, filepath.Join(projectRoot, ".rillan", "modules", "other", "module.yaml"), "id: \"other\"\nversion: \"0.1.0\"\nentrypoint: [\"./bin/module\"]\n")
+	manifestData, err := os.ReadFile(filepath.Join(projectRoot, ".rillan", "modules", "demo", "module.yaml"))
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	payload, err := encryptSystemPolicyPayloadForStatusTest(config.SystemPolicy{TrustedModules: []config.TrustedModulePolicy{{RepoRoot: projectRoot, ModuleID: "demo", ManifestSHA256: sha256Hex(manifestData)}}}, []byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatalf("encryptSystemPolicyPayloadForStatusTest returned error: %v", err)
+	}
+	writeStatusSystemConfig(t, home, payload)
 
 	cmd := newStatusCommand()
 	cmd.SetArgs([]string{"--config", configPath})
@@ -195,6 +219,42 @@ func TestStatusCommandReportsDiscoveredAndEnabledModules(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("output missing %q:\n%s", want, output)
 		}
+	}
+}
+
+func TestStatusCommandRejectsEnabledButUntrustedModule(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", filepath.Join(t.TempDir(), "data"))
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	config.SetSystemKeyringGetForTest(func(service string, account string) (string, error) {
+		return hex.EncodeToString([]byte("0123456789abcdef0123456789abcdef")), nil
+	})
+	t.Cleanup(func() { config.SetSystemKeyringGetForTest(keyring.Get) })
+
+	projectRoot := t.TempDir()
+	configPath := writeStatusConfigWithRoot(t, projectRoot)
+	projectPath := filepath.Join(projectRoot, ".rillan", "project.yaml")
+	if err := os.MkdirAll(filepath.Dir(projectPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(projectPath, []byte("name: \"demo\"\nmodules:\n  enabled: [demo]\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	writeModuleManifest(t, filepath.Join(projectRoot, ".rillan", "modules", "demo", "module.yaml"), "id: \"demo\"\nversion: \"0.1.0\"\nentrypoint: [\"./bin/module\"]\n")
+	payload, err := encryptSystemPolicyPayloadForStatusTest(config.SystemPolicy{}, []byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatalf("encryptSystemPolicyPayloadForStatusTest returned error: %v", err)
+	}
+	writeStatusSystemConfig(t, home, payload)
+
+	cmd := newStatusCommand()
+	cmd.SetArgs([]string{"--config", configPath})
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stdout)
+
+	if err := cmd.ExecuteContext(context.Background()); err == nil {
+		t.Fatal("expected status command to fail for untrusted enabled module")
 	}
 }
 
@@ -284,4 +344,43 @@ func writeModuleManifest(t *testing.T, path string, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile returned error: %v", err)
 	}
+}
+
+func writeStatusSystemConfig(t *testing.T, home string, payload string) {
+	t.Helper()
+	path := filepath.Join(home, ".sidekick", "system.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	content := "encrypted_payload: \"" + payload + "\"\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+}
+
+func encryptSystemPolicyPayloadForStatusTest(policy config.SystemPolicy, key []byte) (string, error) {
+	plaintext, err := json.Marshal(policy)
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
+	combined := append(nonce, ciphertext...)
+	return base64.StdEncoding.EncodeToString(combined), nil
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }

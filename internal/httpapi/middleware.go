@@ -7,29 +7,28 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/sidekickos/rillan/internal/observability"
 )
 
-type contextKey string
-
-const requestIDKey contextKey = "request_id"
-
-func WrapWithMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
+func WrapWithMiddleware(logger *slog.Logger, metrics *observability.Registry, next http.Handler) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	return requestIDMiddleware(logger, next)
+	return requestIDMiddleware(logger, metrics, next)
 }
 
-func requestIDMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
+func requestIDMiddleware(logger *slog.Logger, metrics *observability.Registry, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := newRequestID()
-		ctx := context.WithValue(r.Context(), requestIDKey, requestID)
+		ctx := observability.WithRequestID(r.Context(), requestID)
 		w.Header().Set("X-Request-ID", requestID)
 
 		start := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(recorder, r.WithContext(ctx))
+		metrics.RecordHTTPRequest(r.Method, r.URL.Path, recorder.statusCode, time.Since(start).Milliseconds())
 
 		logger.Info("request completed",
 			"request_id", requestID,
@@ -42,8 +41,7 @@ func requestIDMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 }
 
 func RequestIDFromContext(ctx context.Context) string {
-	requestID, _ := ctx.Value(requestIDKey).(string)
-	return requestID
+	return observability.RequestIDFromContext(ctx)
 }
 
 func newRequestID() string {

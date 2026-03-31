@@ -54,6 +54,7 @@ func (m *runtimeManager) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	previous := m.current.Load()
 	m.current.Store(next)
 	m.logger.Info("runtime snapshot refreshed",
 		"project_config_path", next.projectConfigPath,
@@ -61,5 +62,12 @@ func (m *runtimeManager) Refresh(ctx context.Context) error {
 		"system_config_loaded", next.snapshot.ReadinessInfo.SystemConfigLoaded,
 		"provider", next.snapshot.Provider.Name(),
 	)
+	if previous != nil {
+		previousReady := previous.snapshot.RouteStatus.ByID[previous.snapshot.Provider.Name()].Available
+		nextReady := next.snapshot.RouteStatus.ByID[next.snapshot.Provider.Name()].Available
+		if previousReady != nextReady {
+			m.logger.Info("runtime readiness changed", "provider", next.snapshot.Provider.Name(), "ready", nextReady)
+		}
+	}
 	return nil
 }

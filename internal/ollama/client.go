@@ -8,6 +8,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/sidekickos/rillan/internal/observability"
 )
 
 // Client is a thin HTTP client for the Ollama native API.
@@ -15,6 +18,8 @@ type Client struct {
 	baseURL    string
 	httpClient *http.Client
 }
+
+const defaultHTTPTimeout = 30 * time.Second
 
 type embedRequest struct {
 	Model string `json:"model"`
@@ -38,7 +43,7 @@ type generateResponse struct {
 // New creates an Ollama client targeting the given base URL.
 func New(baseURL string, httpClient *http.Client) *Client {
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
 	return &Client{
 		baseURL:    strings.TrimRight(baseURL, "/"),
@@ -58,6 +63,9 @@ func (c *Client) Embed(ctx context.Context, model string, input string) ([]float
 		return nil, fmt.Errorf("create embed request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if requestID := observability.RequestIDFromContext(ctx); requestID != "" {
+		req.Header.Set("X-Request-ID", requestID)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -93,6 +101,9 @@ func (c *Client) Generate(ctx context.Context, model string, prompt string) (str
 		return "", fmt.Errorf("create generate request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if requestID := observability.RequestIDFromContext(ctx); requestID != "" {
+		req.Header.Set("X-Request-ID", requestID)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -117,6 +128,9 @@ func (c *Client) Ping(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/", nil)
 	if err != nil {
 		return fmt.Errorf("create ping request: %w", err)
+	}
+	if requestID := observability.RequestIDFromContext(ctx); requestID != "" {
+		req.Header.Set("X-Request-ID", requestID)
 	}
 
 	resp, err := c.httpClient.Do(req)

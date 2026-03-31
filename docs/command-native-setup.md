@@ -14,6 +14,7 @@ Rillan manages four categories of state:
 | Markdown skills | Data directory | `rillan skill` |
 | Per-repo settings | Repo-local project config | Hand-edited YAML |
 | System policy | Encrypted system config | Tooling (not hand-edited) |
+| Module trust | Encrypted system config | Tooling (not hand-edited) |
 
 ## Initial Setup
 

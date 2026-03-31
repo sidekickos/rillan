@@ -25,6 +25,7 @@ type daemonRefreshErrorResponse struct {
 }
 
 func refreshDaemonAfterMutation(cfg config.Config, mutation string) error {
+	config.ApplyEnvironmentOverrides(&cfg)
 	if err := daemonRefreshNotifier(cfg); err != nil {
 		return fmt.Errorf("%s, but %w", mutation, err)
 	}
@@ -35,6 +36,13 @@ func notifyDaemonRuntimeRefresh(cfg config.Config) error {
 	request, err := http.NewRequest(http.MethodPost, daemonRefreshURL(cfg), nil)
 	if err != nil {
 		return fmt.Errorf("build daemon refresh request: %w", err)
+	}
+	if cfg.Server.Auth.Enabled {
+		bearer, err := config.ResolveServerAuthBearer(cfg)
+		if err != nil {
+			return fmt.Errorf("resolve daemon auth bearer: %w", err)
+		}
+		request.Header.Set("Authorization", "Bearer "+bearer)
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}

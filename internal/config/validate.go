@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"strings"
 )
 
@@ -97,6 +98,28 @@ func ValidateForMode(cfg Config, mode ValidationMode) error {
 
 	if normalizeString(cfg.Runtime.VectorStoreMode) != "embedded" {
 		return fmt.Errorf("runtime.vector_store_mode must be %q in milestone two", "embedded")
+	}
+
+	if cfg.Server.Auth.Enabled {
+		switch normalizeString(cfg.Server.Auth.AuthStrategy) {
+		case AuthStrategyAPIKey, AuthStrategyBrowserOIDC, AuthStrategyDeviceOIDC:
+		default:
+			return fmt.Errorf("server.auth.auth_strategy must be one of %q, %q, or %q when server.auth.enabled is true", AuthStrategyAPIKey, AuthStrategyBrowserOIDC, AuthStrategyDeviceOIDC)
+		}
+		if strings.TrimSpace(cfg.Server.Auth.SessionRef) == "" {
+			return fmt.Errorf("server.auth.session_ref must not be empty when server.auth.enabled is true")
+		}
+	}
+	if hostRequiresNonLoopbackOptIn(cfg.Server.Host) {
+		if !cfg.Server.AllowNonLoopbackBind {
+			return fmt.Errorf("server.allow_non_loopback_bind must be true when server.host is not loopback")
+		}
+		if !cfg.Server.Auth.Enabled {
+			return fmt.Errorf("server.auth.enabled must be true when server.host is not loopback")
+		}
+		if !isWildcardBindHost(cfg.Server.Host) {
+			return fmt.Errorf("server.host must be a loopback address or wildcard bind when non-loopback binds are enabled")
+		}
 	}
 
 	if cfg.Index.ChunkSizeLines < 1 {
@@ -215,6 +238,22 @@ func ValidateForMode(cfg Config, mode ValidationMode) error {
 	}
 
 	return nil
+}
+
+func hostRequiresNonLoopbackOptIn(host string) bool {
+	trimmed := strings.Trim(strings.TrimSpace(host), "[]")
+	if trimmed == "" || strings.EqualFold(trimmed, "localhost") {
+		return false
+	}
+	if ip := net.ParseIP(trimmed); ip != nil {
+		return !ip.IsLoopback()
+	}
+	return true
+}
+
+func isWildcardBindHost(host string) bool {
+	trimmed := strings.Trim(strings.TrimSpace(host), "[]")
+	return trimmed == "0.0.0.0" || trimmed == "::"
 }
 
 func validateRoutePreference(field string, value string) error {

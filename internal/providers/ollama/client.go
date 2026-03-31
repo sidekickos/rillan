@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sidekickos/rillan/internal/chat"
 	"github.com/sidekickos/rillan/internal/config"
 	internalollama "github.com/sidekickos/rillan/internal/ollama"
 	internalopenai "github.com/sidekickos/rillan/internal/openai"
@@ -57,13 +58,13 @@ func (c *Client) Ready(ctx context.Context) error {
 	return c.client.Ping(ctx)
 }
 
-func (c *Client) ChatCompletions(ctx context.Context, req internalopenai.ChatCompletionRequest, _ []byte) (*http.Response, error) {
-	prompt, err := buildPrompt(req)
+func (c *Client) ChatCompletions(ctx context.Context, req chat.ProviderRequest) (*http.Response, error) {
+	prompt, err := buildPrompt(req.Request)
 	if err != nil {
 		return nil, err
 	}
 
-	content, err := c.client.Generate(ctx, req.Model, prompt)
+	content, err := c.client.Generate(ctx, req.Request.Model, prompt)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +73,7 @@ func (c *Client) ChatCompletions(ctx context.Context, req internalopenai.ChatCom
 		ID:      "chatcmpl-ollama",
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
-		Model:   req.Model,
+		Model:   req.Request.Model,
 		Choices: []chatCompletionChoice{{
 			Index: 0,
 			Message: chatCompletionReply{
@@ -97,7 +98,7 @@ func (c *Client) ChatCompletions(ctx context.Context, req internalopenai.ChatCom
 	}, nil
 }
 
-func buildPrompt(req internalopenai.ChatCompletionRequest) (string, error) {
+func buildPrompt(req chat.Request) (string, error) {
 	parts := make([]string, 0, len(req.Messages)+1)
 	for idx, message := range req.Messages {
 		content, err := internalopenai.MessageText(message)

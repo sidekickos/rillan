@@ -53,9 +53,9 @@ type ReadOnlyToolRuntime struct {
 	readFile      func(string) ([]byte, error)
 }
 
-func NewReadOnlyToolRuntime() *ReadOnlyToolRuntime {
+func NewReadOnlyToolRuntime(approvedRepoRoots []string) *ReadOnlyToolRuntime {
 	return &ReadOnlyToolRuntime{
-		registry:      toolskills.NewRegistry(),
+		registry:      toolskills.NewRegistry(approvedRepoRoots),
 		listInstalled: ListInstalledSkills,
 		readFile:      os.ReadFile,
 	}

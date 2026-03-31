@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,8 +17,10 @@ import (
 
 	"github.com/sidekickos/rillan/internal/agent"
 	"github.com/sidekickos/rillan/internal/audit"
+	"github.com/sidekickos/rillan/internal/chat"
 	"github.com/sidekickos/rillan/internal/classify"
 	"github.com/sidekickos/rillan/internal/config"
+	"github.com/sidekickos/rillan/internal/observability"
 	internalopenai "github.com/sidekickos/rillan/internal/openai"
 	"github.com/sidekickos/rillan/internal/policy"
 	"github.com/sidekickos/rillan/internal/providers"
@@ -42,6 +46,7 @@ type ChatCompletionsHandler struct {
 	classifier   classify.Classifier
 	routeCatalog routing.Catalog
 	routeStatus  routing.StatusCatalog
+	metrics      *observability.Registry
 }
 
 type ChatCompletionsHandlerOption func(*ChatCompletionsHandler)
@@ -138,6 +143,12 @@ func WithRouteCatalog(catalog routing.Catalog) ChatCompletionsHandlerOption {
 func WithRouteStatus(status routing.StatusCatalog) ChatCompletionsHandlerOption {
 	return func(handler *ChatCompletionsHandler) {
 		handler.routeStatus = status
+	}
+}
+
+func WithMetrics(metrics *observability.Registry) ChatCompletionsHandlerOption {
+	return func(handler *ChatCompletionsHandler) {
+		handler.metrics = metrics
 	}
 }
 
@@ -298,6 +309,7 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	if metadata, ok := retrieval.ExtractDebugMetadata(outboundRequest); ok {
 		summary := retrieval.SummarizeDebug(metadata, maxDebugHeaderSourceRefs)
 		applyRetrievalDebugHeaders(w.Header(), summary)
+		h.metrics.RecordRetrieval(summary.SourceCount, summary.Truncated)
 		h.logger.Info("retrieval context compiled",
 			"request_id", RequestIDFromContext(r.Context()),
 			"provider", routeSelection.ProviderKey(),
@@ -368,7 +380,7 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	h.recordAudit(r.Context(), audit.Event{
+	auditEvent := audit.Event{
 		Type:           audit.EventTypeRemoteEgress,
 		RequestID:      RequestIDFromContext(r.Context()),
 		Provider:       routeSelection.ProviderKey(),
@@ -378,10 +390,13 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		RouteSource:    string(evaluation.Trace.RouteSource),
 		OutboundSHA256: audit.HashBytes(outboundBody),
 		SourceRefs:     sourceRefsFromRequest(outboundRequest),
-	})
+	}
 
-	response, err := routeSelection.Provider.ChatCompletions(r.Context(), outboundRequest, outboundBody)
+	response, err := routeSelection.Provider.ChatCompletions(r.Context(), chat.ProviderRequest{Request: outboundRequest, RawBody: outboundBody})
 	if err != nil {
+		auditEvent.Error = err.Error()
+		h.metrics.RecordProviderRequest(routeSelection.ProviderKey(), "error", 0)
+		h.recordAudit(r.Context(), auditEvent)
 		h.logger.Error("upstream request failed", "request_id", RequestIDFromContext(r.Context()), "provider", routeSelection.ProviderKey(), "error", err.Error())
 		status := http.StatusBadGateway
 		if isTimeout(err) {
@@ -394,10 +409,19 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 
 	copyHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
+	auditEvent.ResponseStatus = response.StatusCode
 
-	if err := copyBody(w, response.Body, outboundRequest.Stream || strings.Contains(response.Header.Get("Content-Type"), "text/event-stream")); err != nil {
+	responseSHA256, err := copyBodyAndHash(w, response.Body, outboundRequest.Stream || strings.Contains(response.Header.Get("Content-Type"), "text/event-stream"))
+	auditEvent.ResponseSHA256 = responseSHA256
+	if err != nil {
+		auditEvent.Error = err.Error()
+		h.metrics.RecordProviderRequest(routeSelection.ProviderKey(), "copy_error", response.StatusCode)
+		h.recordAudit(r.Context(), auditEvent)
 		h.logger.Error("proxy response copy failed", "request_id", RequestIDFromContext(r.Context()), "provider", routeSelection.ProviderKey(), "error", err.Error())
+		return
 	}
+	h.metrics.RecordProviderRequest(routeSelection.ProviderKey(), "success", response.StatusCode)
+	h.recordAudit(r.Context(), auditEvent)
 }
 
 type chatRouteSelection struct {
@@ -702,4 +726,13 @@ func copyBody(w http.ResponseWriter, body io.Reader, streaming bool) error {
 			return err
 		}
 	}
+}
+
+func copyBodyAndHash(w http.ResponseWriter, body io.Reader, streaming bool) (string, error) {
+	hasher := sha256.New()
+	tee := io.TeeReader(body, hasher)
+	if err := copyBody(w, tee, streaming); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }

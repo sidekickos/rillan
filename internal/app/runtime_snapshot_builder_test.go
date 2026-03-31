@@ -10,11 +10,56 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/sidekickos/rillan/internal/chat"
 	"github.com/sidekickos/rillan/internal/config"
+	"github.com/sidekickos/rillan/internal/modules"
 	internalopenai "github.com/sidekickos/rillan/internal/openai"
+	"github.com/sidekickos/rillan/internal/secretstore"
+	keyring "github.com/zalando/go-keyring"
 )
 
+func stubSnapshotKeyring(t *testing.T) {
+	t.Helper()
+	secretstore.SetKeyringGetForTest(func(service string, user string) (string, error) {
+		return `{"api_key":"test-key","auth_strategy":"api_key"}`, nil
+	})
+	t.Cleanup(func() { secretstore.SetKeyringGetForTest(keyring.Get) })
+}
+
+func defaultV1SnapshotTestConfig(serverURL string) config.Config {
+	cfg := config.DefaultConfig()
+	cfg.SchemaVersion = config.SchemaVersionV1
+	cfg.LLMs = config.LLMRegistryConfig{}
+	cfg.Provider.Type = config.ProviderOpenAI
+	cfg.Provider.OpenAI.APIKey = "test-key"
+	cfg.Provider.OpenAI.BaseURL = serverURL
+	return cfg
+}
+
+func trustedSystemForModule(t *testing.T, projectPath string, moduleID string, allowStdio bool) *config.SystemConfig {
+	t.Helper()
+	catalog, err := modules.LoadProjectCatalog(projectPath)
+	if err != nil {
+		t.Fatalf("LoadProjectCatalog returned error: %v", err)
+	}
+	if len(catalog.Modules) != 1 {
+		t.Fatalf("expected exactly one module, got %d", len(catalog.Modules))
+	}
+	return &config.SystemConfig{Policy: config.SystemPolicy{TrustedModules: []config.TrustedModulePolicy{{
+		RepoRoot:       modules.ProjectRootFromConfigPath(projectPath),
+		ModuleID:       moduleID,
+		ManifestSHA256: catalog.Modules[0].ManifestSHA256,
+		AllowStdio:     allowStdio,
+	}}}}
+}
+
 func TestBuildRuntimeSnapshotLoadsProjectModules(t *testing.T) {
+	stubSnapshotKeyring(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
 	projectRoot := t.TempDir()
 	projectPath := filepath.Join(projectRoot, ".rillan", "project.yaml")
 	manifestPath := filepath.Join(projectRoot, ".rillan", "modules", "demo", "module.yaml")
@@ -34,15 +79,11 @@ llm_adapters:
 	}
 
 	cfg := config.DefaultConfig()
-	cfg.SchemaVersion = config.SchemaVersionV1
-	cfg.LLMs = config.LLMRegistryConfig{}
-	cfg.Provider.Type = config.ProviderOpenAI
-	cfg.Provider.OpenAI.APIKey = "test-key"
 	project := config.DefaultProjectConfig()
 	project.Name = "demo"
 	project.Modules.Enabled = []string{"demo"}
 
-	snapshot, err := buildRuntimeSnapshot(context.Background(), cfg, project, nil, filepath.Join(t.TempDir(), "audit.jsonl"), projectPath)
+	snapshot, err := buildRuntimeSnapshot(context.Background(), cfg, project, trustedSystemForModule(t, projectPath, "demo", false), filepath.Join(t.TempDir(), "audit.jsonl"), projectPath)
 	if err != nil {
 		t.Fatalf("buildRuntimeSnapshot returned error: %v", err)
 	}
@@ -64,6 +105,12 @@ llm_adapters:
 }
 
 func TestBuildRuntimeSnapshotLeavesModulesInactiveWhenProjectHasNoEnabledModules(t *testing.T) {
+	stubSnapshotKeyring(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
 	projectRoot := t.TempDir()
 	projectPath := filepath.Join(projectRoot, ".rillan", "project.yaml")
 	manifestPath := filepath.Join(projectRoot, ".rillan", "modules", "demo", "module.yaml")
@@ -75,10 +122,6 @@ func TestBuildRuntimeSnapshotLeavesModulesInactiveWhenProjectHasNoEnabledModules
 	}
 
 	cfg := config.DefaultConfig()
-	cfg.SchemaVersion = config.SchemaVersionV1
-	cfg.LLMs = config.LLMRegistryConfig{}
-	cfg.Provider.Type = config.ProviderOpenAI
-	cfg.Provider.OpenAI.APIKey = "test-key"
 	project := config.DefaultProjectConfig()
 	project.Name = "demo"
 
@@ -98,17 +141,46 @@ func TestBuildRuntimeSnapshotLeavesModulesInactiveWhenProjectHasNoEnabledModules
 }
 
 func TestBuildRuntimeSnapshotRejectsUnknownEnabledModule(t *testing.T) {
+	stubSnapshotKeyring(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
 	cfg := config.DefaultConfig()
-	cfg.SchemaVersion = config.SchemaVersionV1
-	cfg.LLMs = config.LLMRegistryConfig{}
-	cfg.Provider.Type = config.ProviderOpenAI
-	cfg.Provider.OpenAI.APIKey = "test-key"
 	project := config.DefaultProjectConfig()
 	project.Name = "demo"
 	project.Modules.Enabled = []string{"missing"}
 
 	if _, err := buildRuntimeSnapshot(context.Background(), cfg, project, nil, filepath.Join(t.TempDir(), "audit.jsonl"), filepath.Join(t.TempDir(), ".rillan", "project.yaml")); err == nil {
 		t.Fatal("expected unknown enabled module to fail")
+	}
+}
+
+func TestBuildRuntimeSnapshotRejectsEnabledButUntrustedModule(t *testing.T) {
+	stubSnapshotKeyring(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	projectRoot := t.TempDir()
+	projectPath := filepath.Join(projectRoot, ".rillan", "project.yaml")
+	manifestPath := filepath.Join(projectRoot, ".rillan", "modules", "demo", "module.yaml")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(manifestPath, []byte("id: \"demo\"\nversion: \"0.1.0\"\nentrypoint: [\"./bin/module\"]\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	project := config.DefaultProjectConfig()
+	project.Name = "demo"
+	project.Modules.Enabled = []string{"demo"}
+
+	if _, err := buildRuntimeSnapshot(context.Background(), cfg, project, &config.SystemConfig{}, filepath.Join(t.TempDir(), "audit.jsonl"), projectPath); err == nil {
+		t.Fatal("expected untrusted enabled module to fail")
 	}
 }
 
@@ -123,10 +195,12 @@ func TestBuildRuntimeSnapshotUsesEnabledModuleHTTPAdapterAsSelectedProvider(t *t
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		requests <- struct {
-			path string
-			body string
-		}{path: r.URL.Path, body: string(body)}
+		if r.Method == http.MethodPost && r.URL.Path == "/chat/completions" {
+			requests <- struct {
+				path string
+				body string
+			}{path: r.URL.Path, body: string(body)}
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"id":"ok"}`))
@@ -160,7 +234,7 @@ llm_adapters:
 	project.Providers.LLMDefault = "demo-http"
 	project.Providers.LLMAllowed = []string{"demo-http"}
 
-	snapshot, err := buildRuntimeSnapshot(context.Background(), cfg, project, nil, filepath.Join(t.TempDir(), "audit.jsonl"), projectPath)
+	snapshot, err := buildRuntimeSnapshot(context.Background(), cfg, project, trustedSystemForModule(t, projectPath, "demo", false), filepath.Join(t.TempDir(), "audit.jsonl"), projectPath)
 	if err != nil {
 		t.Fatalf("buildRuntimeSnapshot returned error: %v", err)
 	}
@@ -175,7 +249,7 @@ llm_adapters:
 		t.Fatalf("expected module adapter route status to be available, got %#v", status)
 	}
 
-	response, err := snapshot.Provider.ChatCompletions(context.Background(), internalopenai.ChatCompletionRequest{Model: "demo-model"}, []byte(`{"model":"demo-model","messages":[{"role":"user","content":"ping"}]}`))
+	response, err := snapshot.Provider.ChatCompletions(context.Background(), chat.ProviderRequest{Request: internalopenai.ChatCompletionRequest{Model: "demo-model"}, RawBody: []byte(`{"model":"demo-model","messages":[{"role":"user","content":"ping"}]}`)})
 	if err != nil {
 		t.Fatalf("ChatCompletions returned error: %v", err)
 	}
@@ -191,6 +265,11 @@ llm_adapters:
 }
 
 func TestBuildRuntimeSnapshotRejectsModuleAdapterIDCollision(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
 	projectRoot := t.TempDir()
 	projectPath := filepath.Join(projectRoot, ".rillan", "project.yaml")
 	manifestPath := filepath.Join(projectRoot, ".rillan", "modules", "demo", "module.yaml")
@@ -216,7 +295,7 @@ llm_adapters:
 	project.Modules.Enabled = []string{"demo"}
 	project.Providers.LLMAllowed = []string{"openai"}
 
-	if _, err := buildRuntimeSnapshot(context.Background(), cfg, project, nil, filepath.Join(t.TempDir(), "audit.jsonl"), projectPath); err == nil {
+	if _, err := buildRuntimeSnapshot(context.Background(), cfg, project, trustedSystemForModule(t, projectPath, "demo", false), filepath.Join(t.TempDir(), "audit.jsonl"), projectPath); err == nil {
 		t.Fatal("expected module adapter id collision to fail")
 	}
 }
@@ -225,6 +304,7 @@ func TestBuildRuntimeSnapshotUsesEnabledModuleStdioAdapterAsSelectedProvider(t *
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fixture is unix-specific")
 	}
+	stubSnapshotKeyring(t)
 
 	requestPath := filepath.Join(t.TempDir(), "request.json")
 	scriptPath := filepath.Join(t.TempDir(), "provider.sh")
@@ -260,7 +340,7 @@ llm_adapters:
 	project.Providers.LLMDefault = "demo-stdio"
 	project.Providers.LLMAllowed = []string{"demo-stdio"}
 
-	snapshot, err := buildRuntimeSnapshot(context.Background(), cfg, project, nil, filepath.Join(t.TempDir(), "audit.jsonl"), projectPath)
+	snapshot, err := buildRuntimeSnapshot(context.Background(), cfg, project, trustedSystemForModule(t, projectPath, "demo", true), filepath.Join(t.TempDir(), "audit.jsonl"), projectPath)
 	if err != nil {
 		t.Fatalf("buildRuntimeSnapshot returned error: %v", err)
 	}
@@ -269,7 +349,7 @@ llm_adapters:
 		t.Fatalf("expected stdio adapter route status to be available, got %#v", status)
 	}
 
-	response, err := snapshot.Provider.ChatCompletions(context.Background(), internalopenai.ChatCompletionRequest{Model: "demo-model"}, []byte(`{"model":"demo-model"}`))
+	response, err := snapshot.Provider.ChatCompletions(context.Background(), chat.ProviderRequest{Request: internalopenai.ChatCompletionRequest{Model: "demo-model"}, RawBody: []byte(`{"model":"demo-model"}`)})
 	if err != nil {
 		t.Fatalf("ChatCompletions returned error: %v", err)
 	}
@@ -287,5 +367,47 @@ llm_adapters:
 	}
 	if got, want := string(requestData), `{"request":{"model":"demo-model","messages":null},"raw_body":{"model":"demo-model"}}`; got != want {
 		t.Fatalf("request payload = %s, want %s", got, want)
+	}
+}
+
+func TestBuildRuntimeSnapshotRejectsTrustedStdioModuleWithoutStdioOptIn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is unix-specific")
+	}
+	stubSnapshotKeyring(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	projectRoot := t.TempDir()
+	projectPath := filepath.Join(projectRoot, ".rillan", "project.yaml")
+	manifestPath := filepath.Join(projectRoot, ".rillan", "modules", "demo", "module.yaml")
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	if err := os.WriteFile(manifestPath, []byte(`id: "demo"
+version: "0.1.0"
+entrypoint: ["./bin/module"]
+llm_adapters:
+  - id: "demo-stdio"
+    backend: "openai_compatible"
+    transport: "stdio"
+    command: ["/bin/true"]
+    auth_strategy: "none"
+    default_model: "demo-model"
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	cfg := defaultV1SnapshotTestConfig(server.URL)
+	project := config.DefaultProjectConfig()
+	project.Name = "demo"
+	project.Modules.Enabled = []string{"demo"}
+	project.Providers.LLMDefault = "demo-stdio"
+	project.Providers.LLMAllowed = []string{"demo-stdio"}
+
+	if _, err := buildRuntimeSnapshot(context.Background(), cfg, project, trustedSystemForModule(t, projectPath, "demo", false), filepath.Join(t.TempDir(), "audit.jsonl"), projectPath); err == nil {
+		t.Fatal("expected trusted stdio module without stdio opt-in to fail")
 	}
 }

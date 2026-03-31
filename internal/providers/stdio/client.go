@@ -10,7 +10,7 @@ import (
 	"os/exec"
 	"strings"
 
-	internalopenai "github.com/sidekickos/rillan/internal/openai"
+	"github.com/sidekickos/rillan/internal/chat"
 )
 
 type Client struct {
@@ -18,8 +18,8 @@ type Client struct {
 }
 
 type chatCompletionRequestEnvelope struct {
-	Request internalopenai.ChatCompletionRequest `json:"request"`
-	RawBody json.RawMessage                      `json:"raw_body"`
+	Request chat.Request    `json:"request"`
+	RawBody json.RawMessage `json:"raw_body"`
 }
 
 type chatCompletionResponseEnvelope struct {
@@ -46,15 +46,15 @@ func (c *Client) Ready(context.Context) error {
 	return nil
 }
 
-func (c *Client) ChatCompletions(ctx context.Context, request internalopenai.ChatCompletionRequest, body []byte) (*http.Response, error) {
-	if request.Stream {
+func (c *Client) ChatCompletions(ctx context.Context, request chat.ProviderRequest) (*http.Response, error) {
+	if request.Request.Stream {
 		return nil, fmt.Errorf("stdio provider does not support streaming responses")
 	}
 	if err := c.Ready(ctx); err != nil {
 		return nil, err
 	}
 
-	payload, err := json.Marshal(chatCompletionRequestEnvelope{Request: request, RawBody: json.RawMessage(body)})
+	payload, err := json.Marshal(chatCompletionRequestEnvelope{Request: request.Request, RawBody: json.RawMessage(request.RawBody)})
 	if err != nil {
 		return nil, fmt.Errorf("marshal stdio provider request: %w", err)
 	}
