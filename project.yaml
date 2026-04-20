@@ -1,0 +1,1319 @@
+# Rillan Project Plan
+#
+# This file is a structured, importable plan for the Rillan kernel product.
+# It is NOT a rillan daemon project config — the daemon looks for project
+# configs under `.rillan/project.yaml` or `.sidekick/project.yaml`, not at
+# the repo root.
+#
+# Intended uses:
+#   - Imported into a Linear workspace (one issue per `tickets[*]` entry)
+#   - Committed in-repo as the canonical backlog/roadmap
+#
+# Source of truth: this file consolidates the prior `.sisyphus/plans/*.md`
+# milestone docs and the `.sisyphus/plans/rillan-linear-seed.md` backlog.
+# When status or acceptance criteria change, update this file.
+
+project:
+  name: Rillan
+  summary: |
+    Rillan is the kernel of a local-first Context Control Plane: a Go daemon
+    that owns the local API boundary, context retrieval and compilation,
+    policy enforcement, provider routing, and audit. Lyra (public client)
+    and website/domain readiness are tracked separately.
+  scope:
+    in:
+      - local API boundary on 127.0.0.1:8420
+      - context retrieval, compilation, and bounded outbound minimization
+      - three-tier policy (tier-0 encrypted system, tier-1 project, tier-2 ephemeral merge)
+      - guarded agent runtime with proposal-gated effectful actions
+      - adapter-host provider execution with bundled first-party presets
+      - append-only audit ledger for remote egress
+      - packaging and release hardening for macOS and Linux
+    out:
+      - Lyra public client and interaction layer
+      - website and domain readiness
+      - Windows runtime or cross-arch beyond amd64/arm64 on darwin/linux
+      - learned / benchmark-driven routing
+      - broad MCP write integration, background watchers, desktop autonomy
+  public_roadmap:
+    now: Deterministic routing intelligence over bundled and installed providers (M09)
+    next: MCP server surface, cross-boundary topology support (daemon OS != client OS), and richer MCP execution
+    later: OSS readiness, signed installers (MSI, DMG, deb, rpm) plus install script, public release hardening, and broader plugin surfaces
+
+# Canonical architecture and product constraints that outlive any milestone.
+# Kept here so imported tickets can reference stable IDs without pulling in
+# long-form ADR content.
+constraints:
+  - id: C-LOCAL-BIND
+    rule: |
+      Default bind stays at 127.0.0.1:8420. Non-loopback binds require
+      explicit opt-in, a keyring-backed auth token, TLS, and a policy
+      verdict allowing the client's origin. This enables Lyra, WSL-bridged
+      clients, and other cross-boundary topologies without abandoning the
+      secure-by-default posture.
+    source: ADR-002 (to be amended by the M-XPLAT topology ADR)
+  - id: C-ANTHROPIC-OPTIN
+    rule: Anthropic is never an implicit default; only user-supplied API key is supported.
+    source: ADR-001
+  - id: C-TIER0-LOCAL
+    rule: Tier-0 system identity config is machine-local, encrypted or keychain-backed, never committed.
+    source: ADR-008
+  - id: C-TIER2-EPHEMERAL
+    rule: Tier-2 policy merge is request-scoped and must not be persisted in combined form.
+    source: ADR-008
+  - id: C-AUDIT-APPEND-ONLY
+    rule: Audit ledger is append-only JSONL; raw sensitive payloads are not stored verbatim.
+    source: ADR-010
+  - id: C-ROUTING-DETERMINISTIC
+    rule: Routing decisions are deterministic, ordered, and explainable; no learned ranker.
+    source: ADR-005
+  - id: C-ADAPTER-HOST
+    rule: Provider execution flows through the adapter host; the runtime must not collapse to a single built-in vendor path.
+    source: ADR-004
+  - id: C-DOCUMENTED-AUTH-ONLY
+    rule: Only documented, automatable auth is supported; no subscriber cookies, reverse-engineered logins, or shared credentials.
+    source: ADR-006
+
+# Milestone history. Kept lightweight — the detail lives in adrs/ and the
+# repo itself. Outstanding work is tracked under `tickets[*]` below.
+milestones:
+  - id: M01
+    title: Daemon Skeleton and Proxy
+    status: done
+    description: |
+      Go daemon with Cobra CLI (serve/init), OpenAI-compatible
+      /v1/chat/completions on localhost:8420, provider adapter, YAML
+      config with env overrides, structured logging with request IDs.
+  - id: M02
+    title: Local Knowledge Substrate
+    status: done
+    description: |
+      Local metadata store, embedded-first vector storage, manual
+      indexing pipeline, and deterministic rebuild/status flows. SQLite
+      metadata with schema versioning, file discovery with glob filters,
+      line-based chunking, `rillan index` and `rillan status` commands.
+  - id: M03
+    title: Retrieval and Context Compilation
+    status: done
+    description: |
+      Inject retrieved local context into /v1/chat/completions through
+      a bounded context compilation layer with source references and
+      opt-in retrieval behavior. Retrieval pipeline with settings
+      resolution, query builder, context compiler with char limits,
+      debug metadata via X-Rillan-Retrieval-* headers.
+  - id: M04
+    title: Local Model Helpers
+    status: done
+    description: |
+      Optional Ollama-first helper flows for query rewriting,
+      contextual grep assistance, and other small-model tasks without
+      making local models a startup dependency. Thin Ollama HTTP
+      client, real embedding generation during indexing, query
+      rewriting, readiness/status reporting of local-model connectivity.
+  - id: M05
+    title: Intent Classification and Policy
+    status: in_progress
+    remaining:
+      - correction memory system (deferred out of the core M05 scope)
+  - id: M06
+    title: Security Completion and Remote-Egress Hardening
+    status: in_progress
+    description: |
+      Policy enforcement, auditability, safer outbound handling, and
+      OS-native packaging/service groundwork for macOS and Linux.
+      Corresponds to the Linear project's "Milestone 05 - Security and
+      Packaging Hardening" entry; the .sisyphus plans split this into
+      M05 (policy) and M06 (security + packaging), so numbering differs
+      between Linear's old shell and this file.
+    remaining:
+      - OS keychain validation on real macOS Keychain and Linux secret-service
+      - deferred packaging backlog (launchd, systemd --user, lifecycle validation)
+  - id: M06T
+    title: Tokenizer-Backed Outbound Code Minimization (ADR-012)
+    status: planned
+    remaining:
+      - 11 phased implementation tickets (currently mirrored in Linear SKA-238..SKA-248)
+  - id: M07
+    title: Guarded Agent Control Plane
+    status: done
+  - id: M07.5
+    title: Command-Native Configuration and Capability Registry
+    status: done
+  - id: M08
+    title: Adapter Host and Bundled First-Party Providers
+    status: done
+  - id: M09
+    title: Deterministic Routing Intelligence
+    status: planned
+  - id: M-OSS
+    title: OSS Readiness
+    status: in_progress
+    description: |
+      License, governance, contributor workflow, signed releases,
+      provenance, public doctrine docs, and repo-opening hygiene for
+      Rillan as an open-source project.
+    remaining:
+      - license landed; governance, templates, signed releases (cosign provenance), disclosure policy pending
+    notes: |
+      signed-release workflow here is the cosign keyless provenance pipeline
+      that produces the unsigned-for-OS-trust blobs consumed by M-INSTALL.
+      Platform-specific code signing (Apple Developer ID, Windows code
+      signing, Linux GPG) lives in M-INSTALL.
+  - id: M-MCP-SERVER
+    title: Rillan as MCP Server (expose project context to clients)
+    status: planned
+    remaining:
+      - protocol handler, resources, prompts, tools bridge, auth/policy gating, per-session project binding
+  - id: M-XPLAT
+    title: Cross-Boundary Topology (daemon OS != client OS, incl. WSL)
+    status: planned
+    remaining:
+      - bridge bind mode with auth+TLS, name-based project registry, WSL-aware paths, Windows daemon target, Windows packaging, Windows Credential Manager validation
+  - id: M-INSTALL
+    title: Signed Installers and Distribution Channels
+    status: planned
+    remaining:
+      - trust/CA enrollment, Windows MSI, macOS DMG, Linux deb, Linux rpm, install script, optional channels (Homebrew, winget)
+
+  # --- Forward milestones (scoped but not yet planned in detail) ---
+  # Each of these is explicitly deferred from an earlier milestone's
+  # "out of scope" list, or builds on a seam established earlier. They
+  # capture direction without overcommitting to an implementation plan.
+
+  - id: M10
+    title: Adaptive Routing Signals
+    status: planned
+    description: |
+      Build on M09's deterministic routing core with opt-in adaptive
+      signals: recent-request latency/cost observations refine the
+      fallback order, health backoff dampens flapping, and optional
+      hedged/speculative dispatch helps tail latency. All signals
+      remain explainable and bounded; no opaque learned ranker.
+    builds_on: [M09]
+    scope_hints:
+      in:
+        - EWMA latency/cost feedback into tie-breakers
+        - health backoff and circuit-breaker behavior per candidate
+        - optional hedged request dispatch with deterministic winner selection
+      out:
+        - benchmark-driven global scoring
+        - learned / ML-based rankers
+        - cost-optimization across provider billing contracts
+
+  - id: M11
+    title: Plugin SDK and Third-Party Provider Families
+    status: planned
+    description: |
+      Extend ADR-004's adapter host to accept third-party provider
+      families through a published SDK, manifest schema, and discovery
+      protocol. Local-install-only at first; remote registries and
+      marketplace are explicit non-goals.
+    builds_on: [M08]
+    scope_hints:
+      in:
+        - stable adapter-family SDK with versioned contract
+        - manifest schema for third-party provider packages
+        - local-path install flow with signature verification
+        - contract-test harness exposed to plugin authors
+      out:
+        - remote plugin registries, marketplaces, or auto-update
+        - third-party write-capable tool integrations
+        - plugin-defined custom routing or policy logic
+
+  - id: M12
+    title: MCP Write Integration with Approval Flows
+    status: planned
+    description: |
+      Extend the read-only MCP surface from M-MCP-SERVER with
+      write-capable MCP operations routed through the existing M07
+      proposal-approval gate. Writes to IDE workspaces, VCS, and ticket
+      systems become proposable but never implicit.
+    builds_on: [M-MCP-SERVER, M07]
+    scope_hints:
+      in:
+        - typed MCP tools for apply_patch / run_tests / PR draft creation
+        - approval flow identical to in-daemon effectful actions
+        - audit coverage for MCP-initiated writes
+      out:
+        - auto-approval or trust ladders (remains an explicit later concern)
+        - background watchers that fire writes without a user-initiated prompt
+
+  - id: M13
+    title: Correction Memory and Project Learning
+    status: planned
+    description: |
+      Grow the first-pass correction memory (T-M05-01) into a
+      structured per-project learning surface: anti-pattern artifacts,
+      preferred-approach captures, and bounded "what worked last time"
+      retrieval. Stays local-first and fully explainable; no opaque
+      user models.
+    builds_on: [M05]
+    scope_hints:
+      in:
+        - typed correction artifact taxonomy with retention controls
+        - retrieval injection rules bounded by policy and budget
+        - operator tools to inspect and curate the learned set
+      out:
+        - cross-project knowledge transfer
+        - automatic fine-tuning of remote models
+        - any feature that would persist sensitive correction content in tier-0 or tier-1 surfaces
+
+  - id: M14
+    title: Team-Scoped Operation (Multi-Client, Multi-Project)
+    status: planned
+    description: |
+      Build on M-XPLAT's named-project registry + bridge-bind mode to
+      support multiple simultaneous clients and, eventually, multiple
+      users sharing one rillan instance. Per-user tier-0, per-session
+      project binding, and partitioned audit views.
+    builds_on: [M-XPLAT, M-MCP-SERVER]
+    scope_hints:
+      in:
+        - session identity model with per-user tier-0 resolution
+        - concurrent sessions against different registered projects
+        - partitioned audit views per user without weakening the ledger
+      out:
+        - full SaaS-style multi-tenancy or cross-org sharing
+        - browser-based admin UI (belongs to Lyra, not kernel)
+
+  - id: M15
+    title: Compliance-Grade Audit and Forensics
+    status: planned
+    description: |
+      Evolve M06's append-only JSONL audit ledger into a query-capable
+      forensics surface with retention policy, redaction-at-export, and
+      compliance-shaped exports (SOC 2 / ISO-ish trails). The on-disk
+      ledger stays append-only and local; compliance features ride on
+      top.
+    builds_on: [M06]
+    scope_hints:
+      in:
+        - structured query layer over the ledger with bounded retention
+        - export formats with deterministic redaction rules
+        - retention and rotation policy expressible in tier-0 config
+      out:
+        - centralized SIEM-style shipping by default
+        - runtime mutation of audit records
+        - any feature that would weaken the append-only guarantee
+
+  - id: M16
+    title: Parallel Sub-Agent Execution
+    status: planned
+    description: |
+      Extend the shared agent runner to support coordinated parallel
+      sub-agents with shared budget, structured handoff, and
+      deterministic merge semantics. Explicit successor to M07's
+      single-runner-with-role-profiles constraint.
+    builds_on: [M07]
+    scope_hints:
+      in:
+        - parallel role execution with bounded concurrency
+        - shared budget accounting across sub-agents
+        - deterministic result merging and conflict surfacing
+      out:
+        - unbounded or self-spawning agent fleets
+        - parallel execution of effectful / write-capable actions (remains strictly sequential through approval gate)
+
+labels:
+  - policy
+  - routing
+  - packaging
+  - audit
+  - agent
+  - tokenizer
+  - oss
+  - keyring
+  - docs
+
+priorities:
+  urgent: 1
+  high: 2
+  medium: 3
+  low: 4
+
+# Tickets — the importable unit.
+# Fields:
+#   id              — stable internal ID (T-<milestone>-NN); not a Linear key
+#   title           — issue title
+#   milestone       — references milestones[*].id
+#   status          — backlog | ready | in_progress | blocked | done | canceled
+#   priority        — urgent | high | medium | low
+#   labels          — list of labels above
+#   summary         — one-paragraph description of the work
+#   acceptance      — bullet list of verifiable acceptance checks
+#   depends_on      — list of ticket ids that must land first
+#   origin          — provenance: which .sisyphus plan or Linear ticket this came from
+tickets:
+
+  # ---------------------------------------------------------------------------
+  # M05 — Intent Classification and Policy (trailing)
+  # ---------------------------------------------------------------------------
+  - id: T-M05-01
+    title: Implement project-scoped correction memory
+    milestone: M05
+    status: backlog
+    priority: medium
+    labels: [policy, agent]
+    summary: |
+      Persist user corrections as project-scoped anti-pattern artifacts and
+      inject them into future context packages. Requires project-scoped
+      storage, retrieval injection rules, and schema/index changes beyond
+      the current M05 storage model. Deferred out of the original M05 scope
+      so the policy seam could ship on time.
+    acceptance:
+      - corrections are stored scoped to the owning project and do not leak across projects
+      - retrieval injection surfaces the correction only for matching future context packages
+      - index/storage migration paths are deterministic and test-covered
+      - bounded by the same size/budget limits as other retrieved material
+    depends_on: []
+    origin: .sisyphus/plans/rillan-milestone-05.md Phase 6
+
+  # ---------------------------------------------------------------------------
+  # M06 — Security Completion and Remote-Egress Hardening (trailing)
+  # ---------------------------------------------------------------------------
+  - id: T-M06-01
+    title: Validate tier-0 keyring path against real macOS Keychain
+    milestone: M06
+    status: backlog
+    priority: high
+    labels: [policy, keyring]
+    summary: |
+      The tier-0 encrypted system-config envelope currently has keyring-backed
+      key-fetch mocked in tests. Exercise the real macOS Keychain path on
+      supported darwin versions and confirm the daemon can decrypt into the
+      in-memory policy struct without leaking raw key material into logs or
+      ledger entries.
+    acceptance:
+      - smoke run on macOS Keychain boots into a valid tier-0 + tier-1 state
+      - invalid or missing keychain item fails with a clear, non-secret-bearing error
+      - logs and ledger contain no raw key material under normal or error paths
+    depends_on: []
+    origin: .sisyphus/plans/rillan-milestone-06.md Implementation Snapshot
+
+  - id: T-M06-02
+    title: Validate tier-0 keyring path against Linux secret-service / libsecret
+    milestone: M06
+    status: backlog
+    priority: high
+    labels: [policy, keyring]
+    summary: |
+      Same validation as T-M06-01 but against Linux secret-service backends
+      (GNOME Keyring, KWallet via libsecret). Confirm the daemon behaves
+      consistently across at least one GNOME-based and one KDE-based target
+      distribution and that headless/service modes degrade predictably when
+      no desktop secret service is available.
+    acceptance:
+      - smoke run on a GNOME-based distro with gnome-keyring-daemon succeeds
+      - smoke run on a KDE-based distro with KWallet unlocked succeeds
+      - headless/service mode returns a deterministic error when no secret service is reachable
+    depends_on: []
+    origin: .sisyphus/plans/rillan-milestone-06.md Implementation Snapshot
+
+  - id: T-M06-03
+    title: Ship macOS launchd user-level service packaging
+    milestone: M06
+    status: backlog
+    priority: medium
+    labels: [packaging]
+    summary: |
+      Promote the existing launchd groundwork to a first-class user-level
+      packaging path. Ship the launchd plist, install/uninstall tooling or
+      documented procedures, and route logs to an appropriate sink.
+    acceptance:
+      - `launchctl load` / `launchctl unload` cleanly starts and stops rillan serve
+      - logs land in a predictable location (per-user log directory or unified log)
+      - parity with foreground `rillan serve` is documented and test-covered
+    depends_on: [T-M06-01]
+    origin: .sisyphus/plans/rillan-milestone-06.md Deferred Backlog
+
+  - id: T-M06-04
+    title: Ship Linux systemd --user packaging
+    milestone: M06
+    status: backlog
+    priority: medium
+    labels: [packaging]
+    summary: |
+      Promote the existing systemd --user groundwork to a first-class
+      packaging path. Ship the unit file, install/uninstall tooling, and
+      integrate with journald for structured logs.
+    acceptance:
+      - `systemctl --user start rillan` starts the daemon reliably across target distros
+      - journald receives structured slog output
+      - install/uninstall steps are documented or automated
+    depends_on: [T-M06-02]
+    origin: .sisyphus/plans/rillan-milestone-06.md Deferred Backlog
+
+  - id: T-M06-05
+    title: Validate live service lifecycle on macOS and Linux
+    milestone: M06
+    status: backlog
+    priority: medium
+    labels: [packaging]
+    summary: |
+      Exercise install / start / stop / remove cycles of the packaged service
+      on real macOS launchd and Linux systemd --user installations. Verify
+      behavior parity with foreground `rillan serve`, including readiness
+      semantics and audit ledger continuity across restarts.
+    acceptance:
+      - install/start/stop/remove is green on a reference macOS build
+      - install/start/stop/remove is green on a reference Linux build
+      - readiness and audit ledger remain consistent across restarts
+    depends_on: [T-M06-03, T-M06-04]
+    origin: .sisyphus/plans/rillan-milestone-06.md Deferred Backlog
+
+  # ---------------------------------------------------------------------------
+  # M06T — Tokenizer-backed outbound minimization (ADR-012)
+  # These 11 tickets are currently mirrored in Linear as SKA-238..SKA-248;
+  # the intent is to remove them from the current Linear project and reimport
+  # them (or similar) into a different workspace.
+  # ---------------------------------------------------------------------------
+  - id: T-M06T-01
+    title: Add outbound tokenizer abstraction
+    milestone: M06T
+    status: backlog
+    priority: high
+    labels: [tokenizer]
+    summary: |
+      Add a tokenizer seam in the outbound request-preparation path and
+      integrate `github.com/tiktoken-go/tokenizer` as the first exact budgeting
+      backend. Add deterministic model-family / encoding mapping for the
+      bundled OpenAI-compatible presets.
+    acceptance:
+      - tokenizer is invokable from the request-prep path and returns exact token counts for bundled encodings
+      - unsupported encodings degrade to a documented approximate count with a warning
+      - go test ./internal/tokenize/... passes
+    depends_on: []
+    origin: Linear SKA-238 (plan reference: rillan-tokenize-implementation.md T001)
+
+  - id: T-M06T-02
+    title: Surface token-budget policy in request preparation
+    milestone: M06T
+    status: backlog
+    priority: high
+    labels: [tokenizer, policy]
+    summary: |
+      Extend the request-prep path after retrieval compilation and before
+      provider dispatch to compose tokenizer budget checks with existing
+      retrieval caps and policy verdicts. Local-only requests may skip
+      minimization unless explicitly configured otherwise.
+    acceptance:
+      - token budget is evaluated only for remote-bound requests by default
+      - budget decisions are surfaced in the policy trace
+      - retrieval caps and token budgets compose deterministically and are test-covered
+    depends_on: [T-M06T-01]
+    origin: Linear SKA-241 (plan reference: T002)
+
+  - id: T-M06T-03
+    title: Add source span mapping primitives
+    milestone: M06T
+    status: backlog
+    priority: high
+    labels: [tokenizer]
+    summary: |
+      Define source-span mapping types keyed by document path, line ranges,
+      byte offsets, and content hashes so minimization remains reversible.
+      Reuse existing retrieval/index metadata as source identity.
+    acceptance:
+      - span types round-trip through encoding without losing source identity
+      - ordered reconstruction metadata records preserved and dropped regions
+      - unit tests cover overlap, adjacency, and hash-mismatch cases
+    depends_on: []
+    origin: Linear SKA-245 (plan reference: T003)
+
+  - id: T-M06T-04
+    title: Implement deterministic comment modes
+    milestone: M06T
+    status: backlog
+    priority: high
+    labels: [tokenizer]
+    summary: |
+      Implement the four comment modes (`include_all`, `include_relevant`,
+      `include_annotations`, `exclude_all`) with deterministic preservation
+      of license headers, build directives, generated markers, and
+      policy-required comments. Support user-extensible annotation patterns.
+    acceptance:
+      - each mode produces identical output on repeated runs against the same input
+      - license headers and build directives are preserved in all modes
+      - annotation-pattern extension is tested and documented
+    depends_on: [T-M06T-03]
+    origin: Linear SKA-248 (plan reference: T004)
+
+  - id: T-M06T-05
+    title: Add local Ollama comment relevance classifier
+    milestone: M06T
+    status: backlog
+    priority: high
+    labels: [tokenizer, policy]
+    summary: |
+      Back the `include_relevant` mode with a bounded Ollama-backed classifier
+      that emits categorical output (`relevant | irrelevant | uncertain`) with
+      confidence gating. Fall back to deterministic defaults on timeout,
+      malformed output, or low confidence.
+    acceptance:
+      - classifier output is bounded to the defined enum with confidence scores
+      - timeouts and malformed output deterministically fall back and are logged
+      - classifier is only invoked when `include_relevant` mode is active
+    depends_on: [T-M06T-04]
+    origin: Linear SKA-240 (plan reference: T005)
+
+  - id: T-M06T-06
+    title: Add local translation artifact store
+    milestone: M06T
+    status: backlog
+    priority: medium
+    labels: [tokenizer, audit]
+    summary: |
+      Add SQLite-backed storage for minimized translation artifacts, keyed by
+      source hash, span identity, tokenizer encoding, comment mode, and
+      request/material hash. Artifacts are short-lived and non-authoritative.
+    acceptance:
+      - artifacts round-trip reliably and expose before/after token counts plus artifact hash
+      - cache key includes all inputs needed for exact-match reuse
+      - TTL and size caps are configurable and enforced
+    depends_on: [T-M06T-03]
+    origin: Linear SKA-239 (plan reference: T006)
+
+  - id: T-M06T-07
+    title: Add optional vector-assisted short-term reuse
+    milestone: M06T
+    status: backlog
+    priority: medium
+    labels: [tokenizer]
+    summary: |
+      Evaluate embedding- or summary-indexed lookup for minimized artifacts
+      so nearby repeated questions can benefit from reuse. Reuse must still
+      gate on exact compatibility checks and is advisory, not authoritative.
+    acceptance:
+      - vector lookup never bypasses exact source/settings compatibility
+      - disabling the feature cleanly reverts to the deterministic artifact store
+      - integration tests cover reuse hit, miss, and compatibility-mismatch cases
+    depends_on: [T-M06T-06]
+    origin: Linear SKA-243 (plan reference: T007)
+
+  - id: T-M06T-08
+    title: Add config and request-override surface for minimization
+    milestone: M06T
+    status: backlog
+    priority: high
+    labels: [tokenizer, policy]
+    summary: |
+      Add global/project config fields for minimization mode, comment mode,
+      token budget, annotation patterns, and TTL/reuse settings. Decide
+      whether per-request overrides mirror the `retrieval` override style.
+      Project config must not weaken machine-local (tier-0) constraints.
+    acceptance:
+      - config load/validate covers new fields and rejects conflicting combinations
+      - per-request overrides (if added) are bounded by policy and documented
+      - project config cannot relax tier-0 minimization requirements
+    depends_on: [T-M06T-02, T-M06T-04]
+    origin: Linear SKA-246 (plan reference: T008)
+
+  - id: T-M06T-09
+    title: Add audit and debug metadata for minimization
+    milestone: M06T
+    status: backlog
+    priority: high
+    labels: [tokenizer, audit]
+    summary: |
+      Extend audit/debug metadata with token counts, minimization mode,
+      comment mode, artifact IDs, and whether Ollama participated. Keep raw
+      minimized code out of the durable audit ledger by default. Surface
+      enough debug output to explain why comments were kept or dropped.
+    acceptance:
+      - audit ledger records minimization metadata without raw outbound content by default
+      - debug headers/fields expose comment-mode decisions on a per-request basis
+      - regression tests prove secret-like material is not leaked through debug surfaces
+    depends_on: [T-M06T-04, T-M06T-08]
+    origin: Linear SKA-247 (plan reference: T009)
+
+  - id: T-M06T-10
+    title: Integration coverage for minimization behavior
+    milestone: M06T
+    status: backlog
+    priority: high
+    labels: [tokenizer]
+    summary: |
+      Add end-to-end request-path tests covering local-only vs remote-bound
+      behavior, outbound token-count comparisons before/after minimization,
+      and comment-mode behavior under representative queries.
+    acceptance:
+      - remote-bound payloads are measurably smaller under relevant modes
+      - local-only requests bypass minimization unless explicitly enabled
+      - coverage crosses retrieval, policy, local model, storage, and provider-prep seams
+    depends_on: [T-M06T-05, T-M06T-08, T-M06T-09]
+    origin: Linear SKA-244 (plan reference: T010)
+
+  - id: T-M06T-11
+    title: Document minimization runtime contract and operational guidance
+    milestone: M06T
+    status: backlog
+    priority: medium
+    labels: [tokenizer, docs]
+    summary: |
+      Update `docs/reference.md` with new settings and request overrides,
+      and `docs/architecture.md` with the new request-path seam. Document
+      supported comment modes, tokenizer-family caveats, and graceful
+      degradation.
+    acceptance:
+      - docs explain the minimization contract, modes, and degradation paths
+      - operator guidance covers tuning, disabling, and troubleshooting
+      - examples match the shipped config surface and request overrides
+    depends_on: [T-M06T-08, T-M06T-09]
+    origin: Linear SKA-242 (plan reference: T011)
+
+  # ---------------------------------------------------------------------------
+  # M09 — Deterministic Routing Intelligence
+  # ---------------------------------------------------------------------------
+  - id: T-M09-01
+    title: Define routing types and capability taxonomy
+    milestone: M09
+    status: backlog
+    priority: high
+    labels: [routing]
+    summary: |
+      Introduce `ModelDescriptor` and `CandidateStatus` types and derive
+      model strengths from configured entries and bundled preset metadata
+      rather than hand-coded switches. Include execution location and
+      capability metadata needed for routing.
+    acceptance:
+      - types live under `internal/routing/` and are covered by fixture tests
+      - task strengths are keyed to `policy.ActionType`
+      - metadata validation lives alongside existing config validation
+    depends_on: []
+    origin: .sisyphus/plans/rillan-milestone-09.md Phase 1
+
+  - id: T-M09-02
+    title: Encode deterministic decision invariants and route-matrix tests
+    milestone: M09
+    status: backlog
+    priority: high
+    labels: [routing]
+    summary: |
+      Write the route-matrix test suite before implementation. Encode ordered
+      decision rules: explicit pin, policy eligibility, task-strength match,
+      local/cloud preference fit, health, latency, stable tie-break. Include
+      negative cases for no-eligible-route and conflicting constraints.
+    acceptance:
+      - table tests for all ordered rules fail meaningfully without an implementation
+      - determinism property: identical inputs always yield identical `RouteDecision`
+      - negative cases produce explicit structured failures, not silent fallbacks
+    depends_on: [T-M09-01]
+    origin: .sisyphus/plans/rillan-milestone-09.md Phase 2
+
+  - id: T-M09-03
+    title: Collect candidate status facts
+    milestone: M09
+    status: backlog
+    priority: high
+    labels: [routing]
+    summary: |
+      Build a candidate-status layer over configured entries, using
+      documented readiness/auth checks plus recent request outcomes. Mark
+      unsupported backend/transport or invalid-auth candidates as
+      unavailable with explicit reasons.
+    acceptance:
+      - configured-but-unauthenticated, authenticated-but-unhealthy, and healthy-local cases all have tests
+      - unavailable-reason is a closed enum surfaced in both status and audit
+      - refresh cadence is explicit and documented
+    depends_on: [T-M09-01]
+    origin: .sisyphus/plans/rillan-milestone-09.md Phase 3
+
+  - id: T-M09-04
+    title: Implement deterministic DecideRoute engine
+    milestone: M09
+    status: backlog
+    priority: high
+    labels: [routing, policy]
+    summary: |
+      Implement `DecideRoute` over descriptors, candidate status, policy
+      verdicts, classification output, and project preferences. Policy
+      verdicts shrink the candidate pool before ranking. Use ordered rules
+      rather than weighted scores.
+    acceptance:
+      - route-matrix coverage for `code_generation`, `architecture`, `review`, `general_qa`, and trade-secret/local-only
+      - policy outranks quality/latency hints in all tests
+      - returns both winning candidate and per-candidate rejection reasons
+    depends_on: [T-M09-02, T-M09-03]
+    origin: .sisyphus/plans/rillan-milestone-09.md Phase 4
+
+  - id: T-M09-05
+    title: Integrate per-request routing into the chat path
+    milestone: M09
+    status: backlog
+    priority: high
+    labels: [routing]
+    summary: |
+      Integrate route selection into the chat request path after
+      classification and policy preflight. Respect project route preferences
+      and task-specific overrides. Explicit provider/model pins still win
+      when policy allows.
+    acceptance:
+      - the HTTP path routes per request, not from a startup-selected provider
+      - integration tests prove project preferences and allowlists affect selection
+      - explicit pins and policy denials are honored correctly
+    depends_on: [T-M09-04]
+    origin: .sisyphus/plans/rillan-milestone-09.md Phase 5
+
+  - id: T-M09-06
+    title: Emit route decision traces and deterministic fallback
+    milestone: M09
+    status: backlog
+    priority: high
+    labels: [routing, audit]
+    summary: |
+      Emit a structured `RouteDecision` into audit/log/debug outputs. Add
+      deterministic fallback order when the preferred route is unavailable,
+      and return a structured "no eligible route" failure when nothing
+      survives policy + status filtering.
+    acceptance:
+      - decision traces appear in audit ledger, logs, and debug headers without secrets
+      - fallback order is stable, documented, and test-covered
+      - no-eligible-route errors are structured and distinguishable from provider failures
+    depends_on: [T-M09-05]
+    origin: .sisyphus/plans/rillan-milestone-09.md Phase 6
+
+  # ---------------------------------------------------------------------------
+  # M-OSS — Open-source readiness
+  # ---------------------------------------------------------------------------
+  - id: T-OSS-01
+    title: Add contributing guide with enforced DCO workflow
+    milestone: M-OSS
+    status: backlog
+    priority: medium
+    labels: [oss, docs]
+    summary: |
+      Document the DCO sign-off requirement and the expected contribution
+      flow. Keep CLA out. Link from README and PR template once those exist.
+    acceptance:
+      - CONTRIBUTING.md describes DCO, commit signing, and review expectations
+      - PR template references the DCO requirement
+      - CI or review workflow enforces sign-off on PRs
+    depends_on: []
+    origin: .sisyphus/plans/rillan-linear-seed.md OSS Readiness §2
+
+  - id: T-OSS-02
+    title: Add SECURITY.md using GitHub Security Advisories
+    milestone: M-OSS
+    status: backlog
+    priority: medium
+    labels: [oss, docs]
+    summary: |
+      Define the private disclosure path via GitHub Security Advisories and
+      include a minimal triage/ack SLA commitment.
+    acceptance:
+      - SECURITY.md is discoverable from the repo root and README
+      - disclosure path, scope, and response-time expectations are explicit
+      - private advisories are enabled on the GitHub repo
+    depends_on: []
+    origin: .sisyphus/plans/rillan-linear-seed.md OSS Readiness §3
+
+  - id: T-OSS-03
+    title: Add Contributor Covenant and community templates
+    milestone: M-OSS
+    status: backlog
+    priority: medium
+    labels: [oss, docs]
+    summary: |
+      Add the Contributor Covenant code of conduct plus issue and PR
+      templates that point at the repo's guardrails and contribution flow.
+    acceptance:
+      - CODE_OF_CONDUCT.md committed
+      - issue templates cover bug, feature request, and policy/governance topics
+      - PR template references DCO, testing, and ADR-update expectations
+    depends_on: [T-OSS-01]
+    origin: .sisyphus/plans/rillan-linear-seed.md OSS Readiness §4
+
+  - id: T-OSS-04
+    title: Add governance and doctrine docs (THESIS/PRINCIPLES/GUARDRAILS/GOVERNANCE)
+    milestone: M-OSS
+    status: backlog
+    priority: medium
+    labels: [oss, docs]
+    summary: |
+      Translate the internal planning doctrine into public-facing docs:
+      four foundational principles (context as local asset, providers as
+      interchangeable solvers, acquisition+packaging as product, audit as
+      default); code-first not code-only; headless daemon; no UI assumptions;
+      local binding; Anthropic stance; indexing constraints; decision-making
+      and maintainer responsibilities.
+    acceptance:
+      - THESIS.md, PRINCIPLES.md, GUARDRAILS.md, GOVERNANCE.md each committed
+      - docs do not duplicate ADR content; they summarize and link
+      - README points at the governance surface
+    depends_on: []
+    origin: .sisyphus/plans/rillan-linear-seed.md OSS Readiness §5
+
+  - id: T-OSS-05
+    title: Publish Now/Next/Later roadmap
+    milestone: M-OSS
+    status: backlog
+    priority: low
+    labels: [oss, docs]
+    summary: |
+      Publish a compact public roadmap in the repo, derived from this
+      project.yaml's `public_roadmap` section. Keep it short and directional;
+      detailed tickets stay here.
+    acceptance:
+      - ROADMAP.md committed and linked from README
+      - content matches `project.public_roadmap` and is reviewed when milestones ship
+    depends_on: []
+    origin: .sisyphus/plans/rillan-linear-seed.md OSS Readiness §6
+
+  - id: T-OSS-06
+    title: Signed release workflow with cosign keyless provenance
+    milestone: M-OSS
+    status: backlog
+    priority: high
+    labels: [oss, packaging]
+    summary: |
+      Build and sign releases for darwin/linux on amd64/arm64 with cosign
+      keyless provenance. Publish via GitHub Releases. Accept any
+      GitHub-verified commit signature on protected branches.
+    acceptance:
+      - release workflow produces signed artifacts with SBOM and provenance attestations
+      - both amd64 and arm64 published for darwin and linux
+      - protected-branch signature policy is documented and enforced
+    depends_on: []
+    origin: .sisyphus/plans/rillan-linear-seed.md OSS Readiness §7
+
+  - id: T-OSS-07
+    title: Release checklist and artifact verification guidance
+    milestone: M-OSS
+    status: backlog
+    priority: medium
+    labels: [oss, docs]
+    summary: |
+      Document how users verify checksums, signatures, and provenance for
+      released artifacts. Ship a release checklist for maintainers covering
+      pre-flight, build, verify, publish, and post-release steps.
+    acceptance:
+      - RELEASING.md covers maintainer flow and is referenced from CONTRIBUTING
+      - public verification docs cover cosign verify, checksum, and SBOM inspection
+      - at least one release exercised end-to-end against the checklist
+    depends_on: [T-OSS-06]
+    origin: .sisyphus/plans/rillan-linear-seed.md OSS Readiness §8
+
+  # ---------------------------------------------------------------------------
+  # M-MCP-SERVER — Rillan as MCP Server
+  # ---------------------------------------------------------------------------
+  - id: T-MCP-01
+    title: Implement MCP server protocol handler over stdio and HTTP transports
+    milestone: M-MCP-SERVER
+    status: backlog
+    priority: high
+    labels: [agent, routing]
+    summary: |
+      Add an MCP server surface that implements the MCP protocol's
+      initialize / resources / prompts / tools methods. Support stdio for
+      same-host clients and HTTP for cross-boundary clients (WSL, Lyra,
+      remote sessions). Stdio must be explicitly same-host-only because it
+      does not cross Windows <-> WSL cleanly.
+    acceptance:
+      - a reference MCP client (e.g. opencode, Claude Desktop) can initialize a session over both transports where supported
+      - stdio transport refuses to start in bridge-bind topologies with a clear error
+      - protocol versioning and capability negotiation follow the MCP spec exactly
+    depends_on: []
+    origin: design discussion around multi-project client-awareness (MCP as the "additional requirements" mechanism)
+
+  - id: T-MCP-02
+    title: Expose project context as MCP resources
+    milestone: M-MCP-SERVER
+    status: backlog
+    priority: high
+    labels: [agent]
+    summary: |
+      Surface project config (system_prompt, instructions, sources summary)
+      and bounded retrieval snapshots as MCP resources so clients can
+      discover and attach them. Resources must be read-only and bounded by
+      the same policy/budget rules as the chat-completions path.
+    acceptance:
+      - resources/list returns project.yaml-derived entries plus indexed-source summaries
+      - resources/read is bounded in size and enforces tier-1/2 policy
+      - raw tier-0 material and secrets never appear in any resource body
+    depends_on: [T-MCP-01]
+    origin: design discussion
+
+  - id: T-MCP-03
+    title: Expose canned MCP prompts with project context baked in
+    milestone: M-MCP-SERVER
+    status: backlog
+    priority: medium
+    labels: [agent]
+    summary: |
+      Surface a small set of prompts (e.g. "plan this change", "review this
+      diff", "explain this file") as MCP prompts, each parameterized over
+      project context so clients can invoke them with one click.
+    acceptance:
+      - prompts/list returns a stable, documented set keyed by role profile
+      - prompts/get substitutes project metadata and returns bounded message templates
+      - prompts do not bypass policy, routing, or auditability
+    depends_on: [T-MCP-02]
+    origin: design discussion
+
+  - id: T-MCP-04
+    title: Bridge read-only built-in tools as MCP tools
+    milestone: M-MCP-SERVER
+    status: backlog
+    priority: high
+    labels: [agent, routing]
+    summary: |
+      Expose the existing read-only ToolSource / ToolExecutor seam (M08) as
+      MCP tools. Effectful / proposal-gated operations remain off the MCP
+      tool surface; approval still flows through the chat-completions path.
+    acceptance:
+      - tools/list mirrors ListReadOnlyTools() output
+      - tools/call invokes the existing executor with the same bounds and audit trace
+      - write-capable operations are not exposed via MCP and attempting to register them fails at startup
+    depends_on: [T-MCP-01]
+    origin: design discussion
+
+  - id: T-MCP-05
+    title: Auth and policy gating for the MCP surface
+    milestone: M-MCP-SERVER
+    status: backlog
+    priority: high
+    labels: [policy, agent]
+    summary: |
+      Gate the MCP surface behind the same bind + auth model as the
+      chat-completions path. Loopback clients run without auth by default;
+      bridge-bind topologies require the keyring-backed token and TLS.
+      Policy verdicts can refuse specific resources/tools per project
+      classification.
+    acceptance:
+      - loopback MCP sessions work without a token by default
+      - bridge-bind MCP sessions reject unauthenticated or non-TLS connections
+      - policy verdicts can exclude resources/tools from a session deterministically
+    depends_on: [T-MCP-01, T-XPLAT-01]
+    origin: design discussion
+
+  - id: T-MCP-06
+    title: Per-session project binding via MCP
+    milestone: M-MCP-SERVER
+    status: backlog
+    priority: high
+    labels: [agent, routing]
+    summary: |
+      Bind each MCP session to one registered project by name. Session
+      resources, prompts, tools, and subsequent chat-completions traffic
+      (linked via a session token or header) use that project's tier-1
+      config. This replaces the current single-project-per-daemon limit
+      without reintroducing path-based CWD probing.
+    acceptance:
+      - MCP initialize accepts a project name and fails clearly for unknown names
+      - chat-completions requests correlated to the session use the bound project's config
+      - unbound sessions get a documented default (first registered project, or refusal)
+    depends_on: [T-MCP-02, T-XPLAT-02]
+    origin: design discussion
+
+  # ---------------------------------------------------------------------------
+  # M-XPLAT — Cross-Boundary Topology (daemon OS != client OS, incl. WSL)
+  # ---------------------------------------------------------------------------
+  - id: T-XPLAT-01
+    title: Bridge bind mode with keyring-backed auth token and TLS
+    milestone: M-XPLAT
+    status: backlog
+    priority: high
+    labels: [policy, packaging]
+    summary: |
+      Add an explicit bind mode for non-loopback clients. Bind to a
+      specified interface (or 0.0.0.0 behind host-level firewalling), serve
+      TLS with a locally generated cert, and require a keyring-backed
+      bearer token on every request. Loopback remains the zero-config path.
+    acceptance:
+      - loopback mode is unchanged and remains the default
+      - bridge mode fails closed without a provisioned token and cert
+      - policy surface can refuse bridge-mode binds for projects classified trade_secret
+    depends_on: []
+    origin: design discussion — daemon-on-Windows, client-in-WSL topology
+
+  - id: T-XPLAT-02
+    title: Name-based project registry
+    milestone: M-XPLAT
+    status: backlog
+    priority: high
+    labels: [agent]
+    summary: |
+      Replace path-based project identity with a name-based registry.
+      `rillan project register --name <n> --root <path>` stores the
+      association in the daemon's state; clients select a project by name
+      via MCP init or an `X-Rillan-Project` header. The daemon owns path
+      resolution, which fixes WSL and cross-mount path translation issues.
+    acceptance:
+      - registry commands (register/list/remove) are symmetric and covered by tests
+      - all request-path project resolution goes through the registry; no path-from-client acceptance paths remain
+      - unknown project names return a deterministic 4xx with an actionable hint
+    depends_on: []
+    origin: design discussion
+
+  - id: T-XPLAT-03
+    title: WSL-aware path translation for daemon-side filesystem access
+    milestone: M-XPLAT
+    status: backlog
+    priority: medium
+    labels: [packaging]
+    summary: |
+      When the daemon runs on Windows and a registered project root points
+      at WSL (`\\wsl.localhost\<distro>\...`), normalize paths, handle
+      symlink / case / permission differences, and document fallback
+      behavior when the distro is stopped. Keep translation contained to
+      the registry layer; upstream code paths see normalized absolute paths.
+    acceptance:
+      - registering a WSL path on Windows succeeds and indexes correctly
+      - daemon degrades with a clear error when the distro is stopped
+      - symlink, case, and permission edge cases are test-covered
+    depends_on: [T-XPLAT-02]
+    origin: design discussion
+
+  - id: T-XPLAT-04
+    title: Windows as a first-class daemon runtime target
+    milestone: M-XPLAT
+    status: backlog
+    priority: high
+    labels: [packaging, oss]
+    summary: |
+      Promote Windows from "architecturally possible" (per ADR-002) to a
+      supported runtime. Cross-compile for windows/amd64 and windows/arm64,
+      validate core test suites, and cover Windows-specific path/ACL
+      behavior.
+    acceptance:
+      - CI builds and tests windows/amd64 at minimum, arm64 as stretch
+      - filesystem, config-path, and keyring shims use Windows-native APIs via build tags
+      - ADR-002 amendment recorded for platform scope expansion
+    depends_on: []
+    origin: design discussion
+
+  - id: T-XPLAT-05
+    title: Windows packaging (Windows Service)
+    milestone: M-XPLAT
+    status: backlog
+    priority: medium
+    labels: [packaging]
+    summary: |
+      Ship a Windows Service packaging path for rillan serve, symmetric to
+      the launchd/systemd--user backlog items. Install/uninstall/start/stop
+      tooling, event-log integration, and parity with foreground
+      `rillan serve` are required.
+    acceptance:
+      - `sc.exe` or equivalent install/start/stop/remove is documented or automated
+      - logs route to Windows Event Log or a predictable file sink
+      - behavior parity with `rillan serve` is test-covered on a Windows reference build
+    depends_on: [T-XPLAT-04]
+    origin: design discussion (mirror of T-M06-03 / T-M06-04 for Windows)
+
+  - id: T-XPLAT-06
+    title: Windows Credential Manager validation for tier-0
+    milestone: M-XPLAT
+    status: backlog
+    priority: high
+    labels: [policy, keyring]
+    summary: |
+      Validate the tier-0 keyring path against Windows Credential Manager
+      (DPAPI-backed) when rillan runs on Windows. Tier-0 secrets bind to
+      the daemon's host OS, not the client's; this must be explicit in
+      operator docs.
+    acceptance:
+      - tier-0 encrypt/decrypt round-trips against Credential Manager on a Windows reference build
+      - missing or inaccessible credential returns a clear, non-secret-bearing error
+      - operator docs state tier-0 binds to the daemon host, regardless of client OS
+    depends_on: [T-XPLAT-04]
+    origin: design discussion (parallel to T-M06-01 / T-M06-02)
+
+  - id: T-XPLAT-07
+    title: Topology ADR amending C-LOCAL-BIND doctrine
+    milestone: M-XPLAT
+    status: backlog
+    priority: high
+    labels: [docs, policy]
+    summary: |
+      Record an ADR that amends ADR-002's local-bind-only posture: default
+      remains loopback, non-loopback is permitted under explicit bridge
+      mode with auth+TLS+policy gating, and documents the Windows/WSL,
+      Lyra, and remote-client topologies this enables.
+    acceptance:
+      - ADR committed under adrs/ with the new doctrine and rationale
+      - README and docs/architecture.md updated to reflect the amended posture
+      - C-LOCAL-BIND in this file references the new ADR rather than ADR-002 alone
+    depends_on: [T-XPLAT-01]
+    origin: design discussion
+
+  # ---------------------------------------------------------------------------
+  # M-INSTALL — Signed installers and distribution channels
+  # ---------------------------------------------------------------------------
+  - id: T-INSTALL-01
+    title: Enroll in code-signing programs and track cert lifecycle
+    milestone: M-INSTALL
+    status: backlog
+    priority: high
+    labels: [packaging, oss, docs]
+    summary: |
+      Prerequisite tracking ticket. Enroll in Apple Developer Program for
+      Developer ID Application + Installer certs and notarization; procure
+      a Windows EV (preferred) or OV code-signing certificate, preferring
+      a CA that offers cloud-HSM / signing-as-a-service (SSL.com eSigner,
+      DigiCert KeyLocker, or Azure Key Vault Premium) so CI can sign
+      without a physical token; generate and publish a Linux packaging
+      GPG key. Record expiry dates, renewal owner, and rotation runbook.
+
+      Hardware note: only FIPS 140-2 L2 YubiKeys (the "FIPS" SKUs, not
+      the standard YubiKey 5 line) qualify under the post-2023 CA/B
+      baseline for Windows code signing. A non-FIPS YubiKey remains the
+      right tool for three adjacent trust jobs:
+        - Linux GPG package signing (signing subkey held on-device)
+        - Apple Developer account 2FA (protect the account that holds
+          Developer ID access)
+        - GitHub account 2FA (protect the identity that drives cosign
+          OIDC signing)
+      A FIPS-variant YubiKey is only worth buying if the chosen Windows
+      CA accepts BYOD; cloud HSM / eSigner is the lower-friction default.
+    acceptance:
+      - Apple Developer enrollment active with Developer ID App + Installer certs issued
+      - Windows code-signing cert provisioned; cloud-HSM / signing-as-a-service path verified against CI
+      - Linux packaging GPG key generated, backed up, published, and (where possible) held on a hardware token
+      - hardware-backed 2FA active on Apple Developer and GitHub accounts driving signing
+      - cert/key inventory, expiry, rotation runbook, and HSM strategy committed to docs/
+    depends_on: []
+    origin: design discussion on installer trust
+
+  - id: T-INSTALL-02
+    title: macOS signed and notarized DMG
+    milestone: M-INSTALL
+    status: backlog
+    priority: high
+    labels: [packaging]
+    summary: |
+      Produce a signed .app bundle and distribute via .dmg (and optionally
+      .pkg). Sign with Developer ID Application, staple notarization
+      tickets, and verify Gatekeeper acceptance on a clean reference
+      machine. Build both arm64 and amd64 or ship a universal binary.
+    acceptance:
+      - DMG installs cleanly on reference macOS without Gatekeeper/notarization warnings
+      - arm64 and amd64 coverage is verified
+      - `spctl --assess` and `codesign --verify` succeed on the artifact
+    depends_on: [T-INSTALL-01]
+    origin: design discussion
+
+  - id: T-INSTALL-03
+    title: Windows signed MSI installer
+    milestone: M-INSTALL
+    status: backlog
+    priority: high
+    labels: [packaging]
+    summary: |
+      Build an MSI (WiX or equivalent) that installs rillan as a Windows
+      service (shares work with T-XPLAT-05), registers event-log sources,
+      and lays down config/data paths. Sign the installer and the embedded
+      binaries with the Windows code-signing cert; verify SmartScreen
+      behavior (instant reputation with EV, building reputation with OV).
+    acceptance:
+      - signed MSI installs and uninstalls cleanly on Windows 10 and 11 reference builds
+      - both amd64 and arm64 artifacts ship
+      - SmartScreen behavior is documented based on the procured cert type (EV vs OV)
+    depends_on: [T-INSTALL-01, T-XPLAT-04, T-XPLAT-05]
+    origin: design discussion
+
+  - id: T-INSTALL-04
+    title: Linux .deb package for modern Debian/Ubuntu
+    milestone: M-INSTALL
+    status: backlog
+    priority: high
+    labels: [packaging]
+    summary: |
+      Produce a .deb for recent Debian stable and Ubuntu LTS releases.
+      Include systemd --user unit (from T-M06-04), register conffiles for
+      config paths, and sign the package plus any published repository
+      Release files with the packaging GPG key.
+    acceptance:
+      - deb installs, starts the user service, and uninstalls cleanly on reference distros
+      - amd64 and arm64 artifacts are produced
+      - GPG signing verified end-to-end; users can verify the signature without trusting a third party
+    depends_on: [T-INSTALL-01, T-M06-04]
+    origin: design discussion
+
+  - id: T-INSTALL-05
+    title: Linux .rpm package for Fedora/RHEL/openSUSE
+    milestone: M-INSTALL
+    status: backlog
+    priority: high
+    labels: [packaging]
+    summary: |
+      Produce an .rpm for recent Fedora, RHEL/CentOS/Alma/Rocky, and
+      openSUSE. Include the systemd --user unit, declare config %ghost
+      entries correctly, and sign the package with the packaging GPG key.
+    acceptance:
+      - rpm installs and uninstalls cleanly on reference distros
+      - amd64 and arm64 artifacts are produced
+      - `rpm --checksig` confirms signature validity against the published key
+    depends_on: [T-INSTALL-01, T-M06-04]
+    origin: design discussion
+
+  - id: T-INSTALL-06
+    title: One-line install script (install.sh)
+    milestone: M-INSTALL
+    status: backlog
+    priority: medium
+    labels: [packaging, oss]
+    summary: |
+      Ship an install.sh served from the canonical domain that detects OS
+      and arch, downloads the correct signed artifact, verifies checksum
+      plus cosign signature (from T-OSS-06), and installs into a sensible
+      user-local path. Script must fail loudly on signature mismatch and
+      must not require curl-to-root semantics for basic developer installs.
+    acceptance:
+      - script installs successfully on macOS, recent Linux, and WSL
+      - signature/checksum verification is mandatory and test-covered
+      - script's source is auditable and small enough to read in one sitting
+    depends_on: [T-INSTALL-02, T-INSTALL-04, T-INSTALL-05, T-OSS-06]
+    origin: design discussion
+
+  - id: T-INSTALL-07
+    title: Distribution channel submissions (Homebrew, winget)
+    milestone: M-INSTALL
+    status: backlog
+    priority: medium
+    labels: [packaging, oss, docs]
+    summary: |
+      Submit rillan to community distribution channels where onboarding
+      friction is low: a Homebrew tap (or homebrew-core once stable), and
+      a winget manifest for Windows. These channels are optional and ride
+      on top of the signed artifacts produced by T-INSTALL-02 and
+      T-INSTALL-03.
+    acceptance:
+      - `brew install rillan` works from the published tap
+      - `winget install rillan` works from the winget-pkgs manifest
+      - submission procedure and update cadence are documented for each channel
+    depends_on: [T-INSTALL-02, T-INSTALL-03]
+    origin: design discussion
+
+# Work that is explicitly out of the Rillan kernel scope but needs a home.
+# These items should NOT be imported into the kernel Linear project; they
+# are captured here so the decision to separate them is not lost.
+out_of_kernel:
+  - id: T-EXT-01
+    title: Lyra public client and interaction layer workstream
+    summary: |
+      Lyra is the separate public client/interaction layer that consumes the
+      Rillan kernel. Product-surface, UX, and cross-platform client
+      decisions live with Lyra, not with the kernel roadmap.
+    disposition: track in a separate Lyra project/workspace; do not mix into the kernel backlog
+    origin: Linear SKA-249
+
+  - id: T-EXT-02
+    title: Website and domain readiness
+    summary: |
+      Marketing site, public domain selection, and docs-site readiness are
+      product-surface concerns that should not delay kernel milestones.
+    disposition: track as a website/domain workstream, likely alongside Lyra
+    origin: Linear SKA-249
+
+# Known cross-cutting risks surfaced across the original plans.
+risks:
+  - OS keychain integration variance across darwin/linux, especially headless/service modes (M06)
+  - false positives in deterministic secret scanning (M05)
+  - protocol drift inside the "OpenAI-compatible" family across bundled presets (M08, ongoing)
+  - learned-router temptation during M09; must stay deterministic and ordered
+  - descriptor drift if preset capability metadata falls out of sync with real upstream behavior (M09)
+  - tokenizer encoding coverage gaps for non-OpenAI families (M06T)
+  - WSL networking-mode variance (NAT vs mirrored) making bridge-bind UX inconsistent across Windows versions (M-XPLAT)
+  - path/symlink/case-sensitivity drift across \\wsl.localhost mounts (M-XPLAT)
+  - client ecosystem MCP-server support is uneven; some OpenAI-compatible clients ignore MCP entirely (M-MCP-SERVER)
+  - stdio MCP transport is same-host-only; mixing stdio and bridge-bind clients will surface confusing errors if not gated hard (M-MCP-SERVER, M-XPLAT)

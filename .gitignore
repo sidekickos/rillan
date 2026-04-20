@@ -9,3 +9,8 @@ coverage.out
 testdata/tmp/
 *.local.yaml
 *.log
+
+# graphify
+graphify-out/
+.graphify_*
+raw/

@@ -191,3 +191,24 @@ When modifying the repo, make the smallest change that solves the current proble
 - Prefer the existing repo shape over generic Go architecture advice.
 - Prefer explicit local-first behavior over convenience shortcuts.
 - Prefer a documented constraint over an assumed future capability.
+
+## Knowledge Graph (graphify)
+
+A persistent knowledge graph of this repo is maintained under `graphify-out/`. It captures code structure (AST-extracted) plus semantic relationships across the ADRs and docs.
+
+- `graphify-out/graph.json` — raw graph data (nodes + edges, each edge tagged `EXTRACTED`, `INFERRED`, or `AMBIGUOUS`)
+- `graphify-out/graph.html` — interactive browser visualization, no server required
+- `graphify-out/GRAPH_REPORT.md` — audit report: god nodes, cross-community bridges, cohesion scores, suggested questions
+
+The `graphify-out/` directory, `.graphify_*` tempfiles, and `raw/` are gitignored — the graph is a local, ephemeral build artifact, not source.
+
+Post-commit and post-checkout git hooks are installed to rebuild the graph automatically when code files change. AST rebuilds are deterministic and free; doc/ADR changes flag a `graphify-out/.needs_update` sentinel and require `/graphify --update` to re-run semantic extraction.
+
+Useful commands when working with the graph:
+
+- `/graphify --update` — incrementally re-extract only changed files
+- `/graphify query "<question>"` — answer using only the graph's nodes and edges, with source citations
+- `/graphify path "A" "B"` — shortest path between two concepts
+- `/graphify explain "<node>"` — plain-language explanation of a node and its neighborhood
+
+Use the graph to orient on unfamiliar areas before editing (especially to find which ADR rationalizes a piece of code). Do not trust `INFERRED` or `AMBIGUOUS` edges without verifying against the source file.
