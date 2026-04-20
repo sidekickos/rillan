@@ -82,6 +82,7 @@ func TestStatusCommandShowsCommittedAndFailedAttemptSeparately(t *testing.T) {
 		"vectors: 1",
 		"system_config_state: missing",
 		"retrieval_mode: disabled",
+		"knowledge_graph_enabled: false",
 		"audit_ledger_path:",
 		"runtime_state: ready",
 	} {
