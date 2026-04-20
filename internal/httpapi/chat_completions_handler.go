@@ -29,6 +29,7 @@ import (
 	"github.com/rillanai/rillan/internal/providers"
 	"github.com/rillanai/rillan/internal/retrieval"
 	"github.com/rillanai/rillan/internal/routing"
+	"github.com/rillanai/rillan/internal/tokenize"
 )
 
 type providerHost interface {
@@ -50,6 +51,7 @@ type ChatCompletionsHandler struct {
 	routeCatalog routing.Catalog
 	routeStatus  routing.StatusCatalog
 	metrics      *observability.Registry
+	tokenCounter tokenize.Counter
 }
 
 type ChatCompletionsHandlerOption func(*ChatCompletionsHandler)
@@ -69,12 +71,13 @@ func NewChatCompletionsHandler(logger *slog.Logger, provider providers.Provider,
 	}
 
 	handler := &ChatCompletionsHandler{
-		logger:    logger,
-		provider:  provider,
-		pipeline:  pipeline,
-		project:   config.DefaultProjectConfig(),
-		evaluator: policy.NewEvaluator(),
-		scanner:   policy.DefaultScanner(),
+		logger:       logger,
+		provider:     provider,
+		pipeline:     pipeline,
+		project:      config.DefaultProjectConfig(),
+		evaluator:    policy.NewEvaluator(),
+		scanner:      policy.DefaultScanner(),
+		tokenCounter: tokenize.NewCounter(),
 	}
 	for _, opt := range opts {
 		opt(handler)
@@ -84,6 +87,9 @@ func NewChatCompletionsHandler(logger *slog.Logger, provider providers.Provider,
 	}
 	if handler.evaluator == nil {
 		handler.evaluator = policy.NewEvaluator()
+	}
+	if handler.tokenCounter == nil {
+		handler.tokenCounter = tokenize.NewCounter()
 	}
 
 	return handler
@@ -152,6 +158,12 @@ func WithRouteStatus(status routing.StatusCatalog) ChatCompletionsHandlerOption 
 func WithMetrics(metrics *observability.Registry) ChatCompletionsHandlerOption {
 	return func(handler *ChatCompletionsHandler) {
 		handler.metrics = metrics
+	}
+}
+
+func WithTokenCounter(counter tokenize.Counter) ChatCompletionsHandlerOption {
+	return func(handler *ChatCompletionsHandler) {
+		handler.tokenCounter = counter
 	}
 }
 
@@ -321,6 +333,10 @@ func (h *ChatCompletionsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 			"truncated", summary.Truncated,
 			"source_refs", summary.SourceRefs,
 		)
+	}
+
+	if routeSelection.IsRemote() && h.tokenCounter != nil {
+		h.logOutboundTokenCount(r.Context(), outboundRequest, routeSelection.ProviderKey())
 	}
 
 	scanResult := h.scanner.Scan(outboundBody)
@@ -738,4 +754,44 @@ func copyBodyAndHash(w http.ResponseWriter, body io.Reader, streaming bool) (str
 		return "", err
 	}
 	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+// logOutboundTokenCount measures the outbound message payload with the
+// configured tokenizer and logs the result. It is invoked for remote-bound
+// requests after retrieval compilation. No budget is enforced here; later
+// M06T tasks surface the count to the policy trace.
+//
+// Messages whose content is not a plain string (structured multi-part content,
+// tool calls) are skipped in this slice; minimization of those shapes is
+// addressed by follow-on tasks.
+func (h *ChatCompletionsHandler) logOutboundTokenCount(ctx context.Context, request internalopenai.ChatCompletionRequest, providerKey string) {
+	texts := make([]string, 0, len(request.Messages))
+	for _, message := range request.Messages {
+		text, err := internalopenai.MessageText(message)
+		if err != nil || text == "" {
+			continue
+		}
+		texts = append(texts, text)
+	}
+	if len(texts) == 0 {
+		return
+	}
+	result, err := tokenize.CountStrings(h.tokenCounter, request.Model, texts...)
+	if err != nil {
+		h.logger.Warn("outbound token count failed",
+			"request_id", RequestIDFromContext(ctx),
+			"provider", providerKey,
+			"model", request.Model,
+			"error", err.Error(),
+		)
+		return
+	}
+	h.logger.Info("outbound token count",
+		"request_id", RequestIDFromContext(ctx),
+		"provider", providerKey,
+		"model", request.Model,
+		"tokens", result.Tokens,
+		"approximate", result.Approximate,
+		"encoding", string(result.Encoding),
+	)
 }
