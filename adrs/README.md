@@ -16,3 +16,4 @@ Current ADRs:
 - `ADR-010.md` — Audit ledger as append-only JSONL
 - `ADR-011.md` — Local intent classification with graceful degradation
 - `ADR-012.md` — Tokenizer-backed outbound code minimization
+- `ADR-013.md` — Optional graphify integration for structural retrieval
