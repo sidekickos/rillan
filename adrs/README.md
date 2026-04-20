@@ -15,3 +15,4 @@ Current ADRs:
 - `ADR-009.md` — Hybrid retrieval with reciprocal rank fusion
 - `ADR-010.md` — Audit ledger as append-only JSONL
 - `ADR-011.md` — Local intent classification with graceful degradation
+- `ADR-012.md` — Tokenizer-backed outbound code minimization
