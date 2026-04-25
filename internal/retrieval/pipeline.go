@@ -424,10 +424,6 @@ func SummarizeDebugBounded(metadata DebugMetadata, maxRefs int, maxRefLen int, m
 	return summary
 }
 
-func formatSourceRef(source SourceReference) string {
-	return formatSourceRefBounded(source, 1<<30)
-}
-
 func formatSourceRefBounded(source SourceReference, maxLen int) string {
 	lineRange := ":" + strconv.Itoa(source.StartLine) + "-" + strconv.Itoa(source.EndLine)
 	return boundSourceRef(source.DocumentPath, lineRange, maxLen)

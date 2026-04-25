@@ -19,7 +19,3 @@ type ProviderRequest struct {
 func MessageText(message Message) (string, error) {
 	return internalopenai.MessageText(message)
 }
-
-func RequiredCapabilities(req Request) []string {
-	return internalopenai.RequiredCapabilities(req)
-}

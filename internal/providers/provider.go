@@ -17,26 +17,10 @@ import (
 	providerstdio "github.com/rillanai/rillan/internal/providers/stdio"
 )
 
-type ChatRequest struct {
-	Request chat.Request
-	RawBody []byte
-}
-
 type Provider interface {
 	Name() string
 	Ready(context.Context) error
 	ChatCompletions(context.Context, chat.ProviderRequest) (*http.Response, error)
-}
-
-func New(cfg config.ProviderConfig, client *http.Client) (Provider, error) {
-	return newAdapter(config.RuntimeProviderAdapterConfig{
-		ID:         "default",
-		Type:       cfg.Type,
-		Transport:  config.LLMTransportHTTP,
-		OpenAI:     cfg.OpenAI,
-		Anthropic:  cfg.Anthropic,
-		LocalModel: cfg.Local,
-	}, client)
 }
 
 func newAdapter(cfg config.RuntimeProviderAdapterConfig, client *http.Client) (Provider, error) {

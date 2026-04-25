@@ -36,6 +36,43 @@ Current release targets are macOS and Linux.
 - Do not introduce background watchers, retrieval-time context injection, MCP behavior, Ollama runtime coupling, or external vector services unless the change explicitly advances those later milestones.
 - Keep config, data, and logs separate. Do not persist runtime-heavy state alongside config.
 
+## Behavioral Guidelines
+
+These reduce common LLM coding mistakes. They bias toward caution over speed; use judgment on trivial tasks. Where a guideline overlaps an existing section, the existing section is authoritative — these add the missing pieces.
+
+### Think before coding
+
+- State assumptions explicitly. If uncertain, ask before implementing.
+- If multiple interpretations exist, present them rather than picking silently.
+- If a simpler approach exists, say so and push back when warranted.
+- If something is unclear, stop, name what's confusing, and ask.
+
+### Simplicity first
+
+Reinforces `Go Development Principles` (DRY/KISS/YAGNI) above. Additional checks:
+
+- No features, abstractions, configurability, or error handling beyond what was asked or what `internal/` boundaries actually require.
+- If a change grew large, ask whether a senior engineer would call it overcomplicated. If yes, rewrite shorter before submitting.
+
+### Surgical changes
+
+Reinforces `Scope Awareness` below. Additional rules:
+
+- Do not "improve" adjacent code, comments, or formatting on the way through.
+- Match existing style even if you'd write it differently.
+- Clean up only the orphans your change created (unused imports, variables, helpers). Do not delete pre-existing dead code; mention it instead.
+- Every changed line should trace directly to the user's request or the milestone it advances.
+
+### Goal-driven execution
+
+Translate vague tasks into verifiable goals before coding. Pairs with the TDD discipline in `Testing Guidance`.
+
+- "Add validation" → write tests for invalid inputs, then make them pass.
+- "Fix the bug" → write a test that reproduces it, then make it pass.
+- "Refactor X" → confirm tests pass before and after.
+
+For multi-step work, state a brief plan with a verification step per item (e.g. `1. change → verify: go test ./internal/foo`). Strong success criteria let the agent loop independently; weak criteria ("make it work") force re-clarification mid-task.
+
 ## Project Structure
 
 ```text

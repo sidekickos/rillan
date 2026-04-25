@@ -190,25 +190,6 @@ func ResolveActiveLLMProvider(cfg Config, project ProjectConfig) (ResolvedLLMPro
 	return ResolvedLLMProvider{}, fmt.Errorf("llm provider %q not found", selectedID)
 }
 
-func ResolveRuntimeProviderConfig(cfg Config, project ProjectConfig) (ProviderConfig, error) {
-	hostCfg, err := ResolveRuntimeProviderHostConfig(cfg, project)
-	if err != nil {
-		return ProviderConfig{}, err
-	}
-	for _, provider := range hostCfg.Providers {
-		if provider.ID != hostCfg.Default {
-			continue
-		}
-		return ProviderConfig{
-			Type:      provider.Type,
-			OpenAI:    provider.OpenAI,
-			Anthropic: provider.Anthropic,
-			Local:     provider.LocalModel,
-		}, nil
-	}
-	return ProviderConfig{}, fmt.Errorf("default runtime provider %q not found", hostCfg.Default)
-}
-
 func ResolveLLMProviderByID(cfg Config, providerID string) (ResolvedLLMProvider, error) {
 	selectedID := strings.TrimSpace(providerID)
 	if cfg.SchemaVersion < SchemaVersionV2 || len(cfg.LLMs.Providers) == 0 {
