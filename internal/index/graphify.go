@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,6 +20,13 @@ type graphifyGraph struct {
 	Edges []map[string]any `json:"edges"`
 }
 
+// DiscoverGraphifyFiles reads graphify artifacts from disk and returns them as
+// SourceFile entries. It is deliberately tolerant of every non-fatal failure
+// mode (missing path, malformed graph.json, unreadable markdown, broken
+// symlinks): each is logged via slog.Default and the corresponding artifact
+// is skipped so indexing and serving never fail because graphify is
+// misbehaving. The function returns nil error in normal operation; a non-nil
+// error is reserved for programmer bugs in the graphify config itself.
 func DiscoverGraphifyFiles(cfg config.KnowledgeGraphConfig) ([]SourceFile, error) {
 	if !cfg.Enabled || strings.TrimSpace(cfg.Path) == "" {
 		return nil, nil
@@ -26,14 +34,21 @@ func DiscoverGraphifyFiles(cfg config.KnowledgeGraphConfig) ([]SourceFile, error
 
 	root, err := filepath.Abs(cfg.Path)
 	if err != nil {
-		return nil, fmt.Errorf("resolve knowledge graph path: %w", err)
+		slog.Warn("graphify: resolve path failed, skipping graph ingestion",
+			"path", cfg.Path, "error", err.Error())
+		return nil, nil
 	}
 
-	if _, err := os.Stat(root); err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
+	if info, err := os.Stat(root); err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("graphify: stat path failed, skipping graph ingestion",
+				"path", root, "error", err.Error())
 		}
-		return nil, fmt.Errorf("stat knowledge graph path: %w", err)
+		return nil, nil
+	} else if !info.IsDir() {
+		slog.Warn("graphify: configured path is not a directory, skipping graph ingestion",
+			"path", root)
+		return nil, nil
 	}
 
 	files := make([]SourceFile, 0)
@@ -42,19 +57,26 @@ func DiscoverGraphifyFiles(cfg config.KnowledgeGraphConfig) ([]SourceFile, error
 	if graphData, err := os.ReadFile(graphJSONPath); err == nil {
 		content, parseErr := summarizeGraphJSON(graphData, cfg)
 		if parseErr != nil {
-			return nil, parseErr
+			slog.Warn("graphify: graph.json malformed, skipping summary",
+				"path", graphJSONPath, "error", parseErr.Error())
+		} else {
+			files = append(files, SourceFile{
+				AbsolutePath: graphJSONPath,
+				RelativePath: graphifyPrefix + "graph.json",
+				Content:      content,
+				SizeBytes:    int64(len(content)),
+			})
 		}
-		files = append(files, SourceFile{
-			AbsolutePath: graphJSONPath,
-			RelativePath: graphifyPrefix + "graph.json",
-			Content:      content,
-			SizeBytes:    int64(len(content)),
-		})
+	} else if !os.IsNotExist(err) {
+		slog.Warn("graphify: read graph.json failed, skipping summary",
+			"path", graphJSONPath, "error", err.Error())
 	}
 
-	err = filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
+	walkErr := filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, entryErr error) error {
+		if entryErr != nil {
+			slog.Warn("graphify: walk entry failed, skipping",
+				"path", filePath, "error", entryErr.Error())
+			return nil
 		}
 		if entry.IsDir() {
 			return nil
@@ -65,13 +87,17 @@ func DiscoverGraphifyFiles(cfg config.KnowledgeGraphConfig) ([]SourceFile, error
 
 		relPath, err := filepath.Rel(root, filePath)
 		if err != nil {
-			return err
+			slog.Warn("graphify: compute relative path failed, skipping",
+				"path", filePath, "error", err.Error())
+			return nil
 		}
 		relPath = filepath.ToSlash(relPath)
 
 		data, err := os.ReadFile(filePath)
 		if err != nil {
-			return err
+			slog.Warn("graphify: read markdown file failed, skipping",
+				"path", filePath, "error", err.Error())
+			return nil
 		}
 		content := normalizeContent(string(data))
 		if strings.TrimSpace(content) == "" {
@@ -86,8 +112,9 @@ func DiscoverGraphifyFiles(cfg config.KnowledgeGraphConfig) ([]SourceFile, error
 		})
 		return nil
 	})
-	if err != nil {
-		return nil, fmt.Errorf("walk knowledge graph files: %w", err)
+	if walkErr != nil {
+		slog.Warn("graphify: walk aborted, returning files discovered so far",
+			"path", root, "error", walkErr.Error())
 	}
 
 	sort.Slice(files, func(i, j int) bool {
